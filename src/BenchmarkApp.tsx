@@ -4,9 +4,10 @@ import type { ForecastMode, Manifest, QuestionDetail, QuestionIndexItem, RunSumm
 
 type CommonData = {
   manifest: Manifest | null
-  questions: QuestionIndexItem[]
+  questions: QuestionIndexItem[] | null
   runs: RunSummary[]
-  error: string | null
+  coreError: string | null
+  questionError: string | null
 }
 
 type SourceFilter = 'all' | SourceType
@@ -21,18 +22,40 @@ const metricDetails: Record<Metric, { label: string; direction: string; decimals
 
 function BenchmarkApp() {
   const route = useHashRoute()
-  const [data, setData] = useState<CommonData>({ manifest: null, questions: [], runs: [], error: null })
+  const [data, setData] = useState<CommonData>({
+    manifest: null,
+    questions: null,
+    runs: [],
+    coreError: null,
+    questionError: null,
+  })
 
   useEffect(() => {
-    Promise.all([loadManifest(), loadQuestionIndex(), loadRunSummaries()])
-      .then(([manifest, questions, runs]) => setData({ manifest, questions, runs, error: null }))
-      .catch((error: unknown) => setData({
-        manifest: null,
-        questions: [],
-        runs: [],
-        error: error instanceof Error ? error.message : 'Unable to load this release.',
-      }))
+    Promise.all([loadManifest(), loadRunSummaries()])
+      .then(([manifest, runs]) => setData((current) => ({ ...current, manifest, runs, coreError: null })))
+      .catch((error: unknown) => setData((current) => ({
+        ...current,
+        coreError: error instanceof Error ? error.message : 'Unable to load this release.',
+      })))
   }, [])
+
+  useEffect(() => {
+    if (!route.startsWith('/questions') || data.questions !== null || data.questionError) return
+
+    let cancelled = false
+    loadQuestionIndex()
+      .then((questions) => {
+        if (!cancelled) setData((current) => ({ ...current, questions, questionError: null }))
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setData((current) => ({
+          ...current,
+          questionError: error instanceof Error ? error.message : 'Unable to load the question index.',
+        }))
+      })
+
+    return () => { cancelled = true }
+  }, [route, data.questions, data.questionError])
 
   useEffect(() => {
     window.scrollTo({ top: 0 })
@@ -47,15 +70,17 @@ function BenchmarkApp() {
         : 'overview'
 
   const content = (() => {
-    if (data.error) return <DataError message={data.error} />
+    if (data.coreError) return <DataError message={data.coreError} />
     if (!data.manifest) return <LoadingPage />
+    if (route.startsWith('/questions') && data.questionError) return <DataError message={data.questionError} />
+    if (route.startsWith('/questions') && data.questions === null) return <LoadingPage label="Loading the question index…" />
     if (route.startsWith('/questions/')) {
       const id = decodeURIComponent(route.slice('/questions/'.length))
-      const item = data.questions.find((candidate) => candidate.id === id)
+      const item = data.questions?.find((candidate) => candidate.id === id)
       return item ? <QuestionDetailPage item={item} /> : <NotFoundPage />
     }
     if (section === 'results') return <ResultsPage manifest={data.manifest} runs={data.runs} />
-    if (section === 'questions') return <QuestionsPage questions={data.questions} manifest={data.manifest} />
+    if (section === 'questions') return <QuestionsPage questions={data.questions ?? []} manifest={data.manifest} />
     if (section === 'method') return <MethodPage manifest={data.manifest} />
     return <OverviewPage manifest={data.manifest} runs={data.runs} />
   })()
@@ -205,7 +230,7 @@ function ResultsPage({ manifest, runs }: { manifest: Manifest; runs: RunSummary[
 function QuestionsPage({ questions, manifest }: { questions: QuestionIndexItem[]; manifest: Manifest }) {
   const [query, setQuery] = useState('')
   const [domain, setDomain] = useState('all')
-  const [split, setSplit] = useState('all')
+  const [split, setSplit] = useState('eval')
   const [belief, setBelief] = useState('all')
   const [page, setPage] = useState(1)
   const pageSize = 48
@@ -230,7 +255,7 @@ function QuestionsPage({ questions, manifest }: { questions: QuestionIndexItem[]
       <section className="question-filters section-rule" aria-label="Question filters">
         <label className="search-field"><span>Search</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search question text or ID" /></label>
         <label className="select-field"><span>Domain</span><select value={domain} onChange={(event) => setDomain(event.target.value)}><option value="all">All domains</option>{domains.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
-        <label className="select-field"><span>Split</span><select value={split} onChange={(event) => setSplit(event.target.value)}><option value="all">Train + eval</option><option value="train">Train</option><option value="eval">Eval</option></select></label>
+        <label className="select-field"><span>Split</span><select value={split} onChange={(event) => setSplit(event.target.value)}><option value="eval">Eval</option><option value="train">Train</option><option value="all">Train + eval</option></select></label>
         <label className="select-field"><span>Question type</span><select value={belief} onChange={(event) => setBelief(event.target.value)}><option value="all">All types</option>{beliefs.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
       </section>
 
@@ -304,6 +329,7 @@ function QuestionDetailPage({ item }: { item: QuestionIndexItem }) {
           <div className="trajectory-head"><div><p className="eyebrow">Forecast trajectory</p><h2>Probability of the resolved outcome</h2></div>{runGroups.length ? <label className="select-field run-select"><span>Model run</span><select value={runId} onChange={(event) => setRunId(event.target.value)}>{runGroups.map((group) => <option key={group.id} value={group.id}>{group.first.modelName} · {modeLabel(group.first.mode)}</option>)}</select></label> : null}</div>
           {selected ? (
             <>
+              <ProbabilityTrajectoryChart rows={selected.rows} fallbackDates={detail.forecastDates} outcome={detail.resolvedLabel} />
               <div className="trajectory-summary"><SummaryCard label="Mean Brier" value={formatMetric(meanBrier, 'brier')} meta="Selected question trajectory" tone="model" /><SummaryCard label="Mean information alpha" value={formatMetric(meanInfo, 'infoAlpha')} meta={`${sourceLabel(selected.first.sourceType)} · ${modeLabel(selected.first.mode)}`} tone={selected.first.sourceType} /></div>
               <div className="trajectory-list">{selected.rows.map((row, index) => <TrajectoryPoint key={`${row.runId}-${row.stepIndex}-${index}`} row={row} fallbackDate={detail.forecastDates[row.stepIndex]} />)}</div>
             </>
@@ -387,6 +413,66 @@ function Pagination({ page, count, onChange }: { page: number; count: number; on
   return <nav className="pagination" aria-label="Question pages"><button type="button" disabled={page === 1} onClick={() => onChange(page - 1)}>← Previous</button><span>{page} / {count}</span><button type="button" disabled={page === count} onClick={() => onChange(page + 1)}>Next →</button></nav>
 }
 
+function ProbabilityTrajectoryChart({ rows, fallbackDates, outcome }: { rows: TrajectoryRow[]; fallbackDates: string[]; outcome: string }) {
+  const points = rows
+    .filter((row) => row.truthProbability != null || row.crowdProbability != null)
+    .sort((a, b) => a.stepIndex - b.stepIndex)
+  if (!points.length) return null
+
+  const width = 720
+  const height = 340
+  const margin = { top: 24, right: 22, bottom: 56, left: 54 }
+  const plotWidth = width - margin.left - margin.right
+  const plotHeight = height - margin.top - margin.bottom
+  const x = (index: number) => points.length === 1 ? margin.left + plotWidth / 2 : margin.left + (index / (points.length - 1)) * plotWidth
+  const y = (value: number) => margin.top + (1 - Math.max(0, Math.min(1, value))) * plotHeight
+  const pathFor = (key: 'truthProbability' | 'crowdProbability') => points.reduce((path, point, index) => {
+    const value = point[key]
+    if (value == null) return path
+    return `${path}${path ? ' L' : 'M'} ${x(index).toFixed(2)} ${y(value).toFixed(2)}`
+  }, '')
+  const labelIndexes = points.length <= 5
+    ? points.map((_, index) => index)
+    : [0, Math.floor((points.length - 1) / 2), points.length - 1]
+  const yTicks = [0, 0.25, 0.5, 0.75, 1]
+
+  return (
+    <figure className="probability-chart">
+      <div className="chart-legend" aria-hidden="true">
+        <span><i className="model" />Model</span>
+        <span><i className="crowd" />Market crowd</span>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Model and crowd probability assigned to ${outcome} across ${points.length} checkpoints`}>
+        {yTicks.map((tick) => (
+          <g key={tick} className="chart-gridline">
+            <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} />
+            <text x={margin.left - 12} y={y(tick) + 5} textAnchor="end">{Math.round(tick * 100)}%</text>
+          </g>
+        ))}
+        {points.map((point, index) => <line key={`checkpoint-${point.stepIndex}-${index}`} className="chart-checkpoint" x1={x(index)} x2={x(index)} y1={margin.top} y2={height - margin.bottom} />)}
+        <path className="chart-line crowd" d={pathFor('crowdProbability')} />
+        <path className="chart-line model" d={pathFor('truthProbability')} />
+        {points.map((point, index) => {
+          const date = point.forecastDate ?? fallbackDates[point.stepIndex] ?? null
+          const tooltip = `Checkpoint ${point.stepIndex + 1} · ${shortDate(date)} · Model ${percent(point.truthProbability)} · Crowd ${percent(point.crowdProbability)}`
+          return (
+            <g key={`points-${point.stepIndex}-${index}`}>
+              {point.crowdProbability != null ? <circle className="chart-point crowd" cx={x(index)} cy={y(point.crowdProbability)} r="5" tabIndex={0} aria-label={tooltip}><title>{tooltip}</title></circle> : null}
+              {point.truthProbability != null ? <circle className="chart-point model" cx={x(index)} cy={y(point.truthProbability)} r="5" tabIndex={0} aria-label={tooltip}><title>{tooltip}</title></circle> : null}
+            </g>
+          )
+        })}
+        {labelIndexes.map((index) => {
+          const point = points[index]
+          const date = point.forecastDate ?? fallbackDates[point.stepIndex] ?? null
+          return <text key={`label-${point.stepIndex}-${index}`} className="chart-date" x={x(index)} y={height - 22} textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'}>t{point.stepIndex + 1} · {compactDate(date)}</text>
+        })}
+      </svg>
+      <figcaption>Probability assigned to the resolved outcome: <strong>{outcome}</strong>. Focus or hover over a point for exact values.</figcaption>
+    </figure>
+  )
+}
+
 function TrajectoryPoint({ row, fallbackDate }: { row: TrajectoryRow; fallbackDate?: string }) {
   return (
     <article className="trajectory-point">
@@ -458,5 +544,6 @@ function number(value: number) { return new Intl.NumberFormat('en-US').format(va
 function percent(value: number | null | undefined, digits = 1) { return value == null ? '—' : `${(value * 100).toFixed(digits)}%` }
 function average(values: number[]) { return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null }
 function shortDate(value: string | null) { if (!value) return '—'; const date = new Date(value.length === 10 ? `${value}T00:00:00Z` : value); return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date) }
+function compactDate(value: string | null) { if (!value) return 'Date unavailable'; const date = new Date(value.length === 10 ? `${value}T00:00:00Z` : value); return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(date) }
 
 export default BenchmarkApp

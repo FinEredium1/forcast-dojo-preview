@@ -1,6 +1,9 @@
 import type { Manifest, QuestionDetail, QuestionIndexItem, RunSummary, TrajectoryRow } from './types'
 
 const base = `${import.meta.env.BASE_URL}data/`
+let manifestPromise: Promise<Manifest> | null = null
+let questionIndexPromise: Promise<QuestionIndexItem[]> | null = null
+let runSummariesPromise: Promise<RunSummary[]> | null = null
 const questionChunkCache = new Map<string, Promise<QuestionDetail[]>>()
 const resultChunkCache = new Map<string, Promise<Record<string, TrajectoryRow[]>>>()
 
@@ -11,15 +14,18 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export function loadManifest() {
-  return getJson<Manifest>('manifest.json')
+  manifestPromise ??= getJson<Manifest>('manifest.json')
+  return manifestPromise
 }
 
 export function loadQuestionIndex() {
-  return getJson<QuestionIndexItem[]>('questions-index.json')
+  questionIndexPromise ??= getJson<QuestionIndexItem[]>('questions-index.json')
+  return questionIndexPromise
 }
 
 export function loadRunSummaries() {
-  return getJson<RunSummary[]>('results-summary.json')
+  runSummariesPromise ??= getJson<RunSummary[]>('results-summary.json')
+  return runSummariesPromise
 }
 
 export async function loadQuestion(item: QuestionIndexItem) {
