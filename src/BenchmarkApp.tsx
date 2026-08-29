@@ -123,7 +123,7 @@ function Footer({ manifest }: { manifest: Manifest | null }) {
 }
 
 function OverviewPage({ manifest, runs }: { manifest: Manifest; runs: RunSummary[] }) {
-  const bestRuns = [...runs].filter((run) => run.brier != null).sort((a, b) => (a.brier ?? 1) - (b.brier ?? 1)).slice(0, 3)
+  const bestRuns = [...runs].filter((run) => run.accuracy != null).sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0)).slice(0, 3)
 
   return (
     <>
@@ -151,12 +151,12 @@ function OverviewPage({ manifest, runs }: { manifest: Manifest; runs: RunSummary
         <div className="section-heading">
           <p className="eyebrow">The central comparison</p>
           <h2>Models against the crowd, date by date</h2>
-          <p>The crowd probability is our operational measure of collective human judgment. Lower Brier scores indicate forecasts that assign more probability to what ultimately happened.</p>
+          <p>The crowd probability is our operational measure of collective human judgment. Higher accuracy means more forecasts correctly identified the eventual outcome.</p>
         </div>
-        <div className="score-card" aria-label="Brier score preview">
-          <div className="score-card-head"><span>Brier score</span><span>Lower is better</span></div>
-          <ScoreRow label={manifest.crowd.name} meta="Human baseline" value={manifest.crowd.brier} tone="crowd" />
-          {bestRuns.map((run) => <ScoreRow key={run.id} label={run.modelName} meta={`${sourceLabel(run.sourceType)} · ${modeLabel(run.mode)}`} value={run.brier} tone="model" />)}
+        <div className="score-card" aria-label="Accuracy preview">
+          <div className="score-card-head"><span>Accuracy</span><span>Higher is better</span></div>
+          <ScoreRow label={manifest.crowd.name} meta="Human baseline" value={manifest.crowd.accuracy} metric="accuracy" tone="crowd" />
+          {bestRuns.map((run) => <ScoreRow key={run.id} label={run.modelName} meta={`${sourceLabel(run.sourceType)} · ${modeLabel(run.mode)}`} value={run.accuracy} metric="accuracy" tone="model" />)}
         </div>
       </section>
 
@@ -183,7 +183,7 @@ function OverviewPage({ manifest, runs }: { manifest: Manifest; runs: RunSummary
 function ResultsPage({ manifest, runs }: { manifest: Manifest; runs: RunSummary[] }) {
   const [source, setSource] = useState<SourceFilter>('all')
   const [mode, setMode] = useState<ModeFilter>('all')
-  const [metric, setMetric] = useState<Metric>('brier')
+  const [metric, setMetric] = useState<Metric>('accuracy')
   const filtered = useMemo(() => {
     return runs
       .filter((run) => source === 'all' || run.sourceType === source)
@@ -367,9 +367,9 @@ function Stat({ value, label }: { value: string; label: string }) {
   return <article><span className="stat-value">{value}</span><span className="stat-label">{label}</span></article>
 }
 
-function ScoreRow({ label, meta, value, tone }: { label: string; meta: string; value: number | null; tone: 'crowd' | 'model' }) {
-  const width = value == null ? 0 : Math.max(4, Math.min(100, (value / 0.6) * 100))
-  return <div className="score-row"><div className="score-label"><strong>{label}</strong><span>{meta}</span></div><div className="score-track" aria-hidden="true"><span className={tone} style={{ width: `${width}%` }} /></div><span className="score-number">{formatMetric(value, 'brier')}</span></div>
+function ScoreRow({ label, meta, value, metric, tone }: { label: string; meta: string; value: number | null; metric: Metric; tone: 'crowd' | 'model' }) {
+  const width = resultBarWidth(value, metric)
+  return <div className="score-row"><div className="score-label"><strong>{label}</strong><span>{meta}</span></div><div className="score-track" aria-hidden="true"><span className={tone} style={{ width: `${width}%` }} /></div><span className="score-number">{formatMetric(value, metric)}</span></div>
 }
 
 function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
