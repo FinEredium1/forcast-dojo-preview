@@ -1,0 +1,12 @@
+{
+  "version": "2026.08",
+  "label": "August 2026 release",
+  "crowd": {
+    "name": "Market crowd",
+    "brier": 0.4711,
+    "accuracy": 0.661,
+    "infoAlpha": 0,
+    "nRows": 871,
+    "nScored": 818
+  }
+}
