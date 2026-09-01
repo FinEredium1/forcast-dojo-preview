@@ -145,6 +145,7 @@ function OverviewPage({ manifest, runs }: { manifest: Manifest; runs: RunSummary
         <Stat value={number(manifest.checkpointCount)} label="dated checkpoints" />
         <Stat value={number(manifest.resultRunCount)} label="model runs published" />
         <Stat value="Monthly" label="versioned releases" />
+        <Stat value="20M+" label="news articles in corpus" />
       </section>
 
       <section className="comparison section-rule">
@@ -154,7 +155,7 @@ function OverviewPage({ manifest, runs }: { manifest: Manifest; runs: RunSummary
           <p>The crowd probability is our operational measure of collective human judgment. Higher accuracy means more forecasts correctly identified the eventual outcome.</p>
         </div>
         <div className="score-card" aria-label="Accuracy preview">
-          <div className="score-card-head"><span>Accuracy</span><span>Higher is better</span></div>
+          <div className="score-card-head"><span>Accuracy</span></div>
           <ScoreRow label={manifest.crowd.name} meta="Human baseline" value={manifest.crowd.accuracy} metric="accuracy" tone="crowd" />
           {bestRuns.map((run) => <ScoreRow key={run.id} label={run.modelName} meta={`${sourceLabel(run.sourceType)} · ${modeLabel(run.mode)}`} value={run.accuracy} metric="accuracy" tone="model" />)}
         </div>
