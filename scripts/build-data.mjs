@@ -2,6 +2,7 @@ import { createReadStream, existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { buildAnalysis } from './build-analysis.mjs'
 
 const CHUNK_SIZE = 100
 const args = parseArgs(process.argv.slice(2))
@@ -67,7 +68,7 @@ for (const file of resultFiles) {
   for (const row of normalizedRows) {
     if (!eventToChunk.has(row.eventId)) continue
     if (!trajectoryMap.has(row.eventId)) trajectoryMap.set(row.eventId, [])
-    trajectoryMap.get(row.eventId).push(row)
+    trajectoryMap.get(row.eventId).push(toTrajectoryRow(row))
   }
 }
 
@@ -98,12 +99,14 @@ const manifest = {
   chunkSize: CHUNK_SIZE,
   questionChunks: Math.ceil(questions.length / CHUNK_SIZE),
   resultRunCount: runRows.length,
+  notebookBaselines: release.notebookBaselines ?? [],
   crowd: release.crowd,
 }
 
 await writeJson(join(outputRoot, 'manifest.json'), manifest)
 await writeJson(join(outputRoot, 'questions-index.json'), index)
 await writeJson(join(outputRoot, 'results-summary.json'), runRows.sort((a, b) => a.brier - b.brier))
+await buildAnalysis(outputRoot)
 
 console.log(JSON.stringify({
   output: outputRoot,
@@ -183,6 +186,8 @@ async function discoverResultFiles(paths) {
 
 function normalizeResultRow(row) {
   const modelName = row.model_name ?? 'Unknown model'
+  const metrics = row.metrics ?? {}
+  const perTool = metrics.per_tool_metrics ?? {}
   return {
     runId: row.run_id ?? `${modelName}.${row.mode ?? 'unknown'}`,
     modelName,
@@ -201,13 +206,35 @@ function normalizeResultRow(row) {
     truthProbability: numeric(row.p_truth),
     parseOk: Boolean(row.parse_ok),
     termination: row.termination ?? null,
+    toolCalls: numeric(metrics.tool_calls) ?? 0,
+    searchCalls: numeric(perTool.search?.calls) ?? 0,
+    scrapeCalls: numeric(perTool.scrape?.calls) ?? 0,
+    pythonCalls: numeric(perTool.python?.calls) ?? 0,
+    modelCalls: numeric(metrics.model_calls) ?? 0,
+    inputTokens: numeric(metrics.input_tokens?.total) ?? 0,
+    outputTokens: numeric(metrics.output_tokens?.total) ?? 0,
+    cacheReadTokens: numeric(metrics.cache_read_input_tokens?.total) ?? 0,
+    modelLatencySeconds: numeric(metrics.model_latency_s?.total) ?? 0,
+    notebookFormatOk: numeric(row.format_notebook_ok),
+    responsePresent: typeof row.final_response === 'string' && row.final_response.trim().length > 0,
   }
+}
+
+function toTrajectoryRow(row) {
+  const {
+    responsePresent,
+    ...trajectoryRow
+  } = row
+  return trajectoryRow
 }
 
 function summarizeRun(file, rows) {
   const first = rows[0]
   const scored = rows.filter((row) => row.parseOk && row.brier !== null)
   const infoRows = scored.filter((row) => row.infoAlpha !== null)
+  const notebookRows = first.mode === 'sequential'
+    ? rows.filter((row) => row.notebookFormatOk !== null)
+    : []
   return {
     id: first.runId,
     modelName: first.modelName,
@@ -221,6 +248,22 @@ function summarizeRun(file, rows) {
     accuracy: mean(scored.map((row) => row.accuracy).filter((value) => value !== null)),
     infoAlpha: mean(infoRows.map((row) => row.infoAlpha)),
     complete: scored.length === rows.length,
+    totalToolCalls: sum(rows.map((row) => row.toolCalls)),
+    avgToolCalls: mean(rows.map((row) => row.toolCalls)),
+    avgSearchCalls: mean(rows.map((row) => row.searchCalls)),
+    avgScrapeCalls: mean(rows.map((row) => row.scrapeCalls)),
+    avgPythonCalls: mean(rows.map((row) => row.pythonCalls)),
+    avgModelCalls: mean(rows.map((row) => row.modelCalls)),
+    totalInputTokens: sum(rows.map((row) => row.inputTokens)),
+    avgInputTokens: mean(rows.map((row) => row.inputTokens)),
+    totalOutputTokens: sum(rows.map((row) => row.outputTokens)),
+    avgOutputTokens: mean(rows.map((row) => row.outputTokens)),
+    totalCacheReadTokens: sum(rows.map((row) => row.cacheReadTokens)),
+    avgModelLatencySeconds: mean(rows.map((row) => row.modelLatencySeconds)),
+    notebookValidRate: notebookRows.length
+      ? mean(notebookRows.map((row) => row.notebookFormatOk))
+      : null,
+    responseRate: mean(rows.map((row) => row.responsePresent ? 1 : 0)),
   }
 }
 
@@ -244,6 +287,10 @@ function numeric(value) {
 function mean(values) {
   if (!values.length) return null
   return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+function sum(values) {
+  return values.reduce((total, value) => total + value, 0)
 }
 
 function countBy(values, keyFn) {

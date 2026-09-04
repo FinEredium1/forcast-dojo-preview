@@ -10,7 +10,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "data:build": "node scripts/build-data.mjs"
+    "data:build": "node scripts/build-data.mjs",
+    "data:analysis": "node scripts/build-analysis.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",

@@ -1,6 +1,11 @@
 {
   "version": "2026.08",
   "label": "August 2026 release",
+  "notebookBaselines": [
+    { "modelName": "opus-4.6", "validRate": 0.934 },
+    { "modelName": "Qwen3-30B-A3B-Thinking-2507", "validRate": 0.689 },
+    { "modelName": "Qwen3-32B", "validRate": 0.944 }
+  ],
   "crowd": {
     "name": "Market crowd",
     "brier": 0.4711,

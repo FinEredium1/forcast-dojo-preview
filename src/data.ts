@@ -1,9 +1,10 @@
-import type { Manifest, QuestionDetail, QuestionIndexItem, RunSummary, TrajectoryRow } from './types'
+import type { AnalysisSummary, Manifest, QuestionDetail, QuestionIndexItem, RunSummary, TrajectoryRow } from './types'
 
 const base = `${import.meta.env.BASE_URL}data/`
 let manifestPromise: Promise<Manifest> | null = null
 let questionIndexPromise: Promise<QuestionIndexItem[]> | null = null
 let runSummariesPromise: Promise<RunSummary[]> | null = null
+let analysisPromise: Promise<AnalysisSummary> | null = null
 const questionChunkCache = new Map<string, Promise<QuestionDetail[]>>()
 const resultChunkCache = new Map<string, Promise<Record<string, TrajectoryRow[]>>>()
 
@@ -26,6 +27,11 @@ export function loadQuestionIndex() {
 export function loadRunSummaries() {
   runSummariesPromise ??= getJson<RunSummary[]>('results-summary.json')
   return runSummariesPromise
+}
+
+export function loadAnalysis() {
+  analysisPromise ??= getJson<AnalysisSummary>('analysis-summary.json')
+  return analysisPromise
 }
 
 export async function loadQuestion(item: QuestionIndexItem) {

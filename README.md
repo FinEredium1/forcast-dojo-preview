@@ -34,7 +34,15 @@ npm run data:build -- --train '..\..\forecast_train.jsonl' --eval '..\..\forecas
 
 Add another `--results <directory>` argument for each additional model-result directory. The exporter recreates `public/data/`, chunks the question and trajectory records, and strips private reasoning fields.
 
-4. Inspect `public/data/manifest.json` and `public/data/results-summary.json`.
+The same command also generates `public/data/analysis-summary.json`, which contains precomputed question-clustered confidence intervals, domain and resolution-horizon breakdowns, matched sequential/independent comparisons, and best/worst question summaries. Raw responses, notebook text, search queries, logs, and article text are never copied into this file.
+
+If the public question and result chunks already exist and only the derived analysis needs to be refreshed, run:
+
+```powershell
+npm run data:analysis
+```
+
+4. Inspect `public/data/manifest.json`, `public/data/results-summary.json`, and `public/data/analysis-summary.json`.
 5. Verify the production build:
 
 ```powershell
