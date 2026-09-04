@@ -376,7 +376,17 @@ function QuestionDetailPage({ item, questions, browseState }: { item: QuestionIn
         </aside>
 
         <div className="trajectory-panel">
-          <div className="trajectory-head"><div><p className="eyebrow">Forecast trajectory</p><h2>Probability of the resolved outcome</h2></div>{runGroups.length ? <label className="select-field run-select"><span>Model run</span><select value={runId} onChange={(event) => setRunId(event.target.value)}>{runGroups.map((group) => <option key={group.id} value={group.id}>{group.first.modelName} · {modeLabel(group.first.mode)}</option>)}</select></label> : null}</div>
+          <div className="trajectory-head">
+            <div><p className="eyebrow">Forecast trajectory</p><h2>Probability of the resolved outcome</h2></div>
+            {runGroups.length ? (
+              <label className="select-field run-select">
+                <span>Model run</span>
+                <select value={runId} onChange={(event) => setRunId(event.target.value)}>
+                  {runGroups.map((group) => <option key={group.id} value={group.id}>{shortModelName(group.first.modelName)} · {modeLabel(group.first.mode)}</option>)}
+                </select>
+              </label>
+            ) : null}
+          </div>
           {selected ? (
             <>
               <ProbabilityTrajectoryChart rows={selected.rows} fallbackDates={detail.forecastDates} outcome={detail.resolvedLabel} />
@@ -716,9 +726,48 @@ function TrajectoryPoint({ row, fallbackDate }: { row: TrajectoryRow; fallbackDa
 function CheckpointActivity({ rows, fallbackDates }: { rows: TrajectoryRow[]; fallbackDates: string[] }) {
   return (
     <section className="checkpoint-activity" aria-labelledby="checkpoint-activity-title">
-      <div><p className="eyebrow">Public process telemetry</p><h3 id="checkpoint-activity-title">Checkpoint activity</h3><p>Counts describe the forecasting process without revealing model reasoning, search queries, notebook text, or article content.</p></div>
+      <div><p className="eyebrow">Process record</p><h3 id="checkpoint-activity-title">Tools and belief notebooks</h3><p>Each checkpoint records the tools used, model workload, and the notebook produced for the next forecast.</p></div>
       <div className="checkpoint-activity-grid">
-        {rows.map((row, index) => <article key={`${row.runId}-activity-${row.stepIndex}-${index}`}><div className="checkpoint-activity-head"><span>t{row.stepIndex + 1}</span><strong>{compactDate(row.forecastDate ?? fallbackDates[row.stepIndex] ?? null)}</strong></div><dl><div><dt>Model</dt><dd>{percent(row.truthProbability)}</dd></div><div><dt>Crowd</dt><dd>{percent(row.crowdProbability)}</dd></div><div><dt>Searches</dt><dd>{optionalNumber(row.searchCalls)}</dd></div><div><dt>Scrapes</dt><dd>{optionalNumber(row.scrapeCalls)}</dd></div><div><dt>Python</dt><dd>{optionalNumber(row.pythonCalls)}</dd></div><div><dt>Notebook valid</dt><dd>{row.notebookFormatOk == null ? '—' : row.notebookFormatOk ? 'Yes' : 'No'}</dd></div></dl></article>)}
+        {rows.map((row, index) => {
+          const tools = Object.entries(row.tools ?? {}).filter(([, metric]) => metric.calls > 0)
+          return (
+            <article key={`${row.runId}-activity-${row.stepIndex}-${index}`}>
+              <div className="checkpoint-activity-head"><span>t{row.stepIndex + 1}</span><strong>{compactDate(row.forecastDate ?? fallbackDates[row.stepIndex] ?? null)}</strong></div>
+              <dl className="checkpoint-metrics">
+                <div><dt>Model forecast</dt><dd>{percent(row.truthProbability)}</dd></div>
+                <div><dt>Crowd</dt><dd>{percent(row.crowdProbability)}</dd></div>
+                <div><dt>Tool calls</dt><dd>{optionalNumber(row.toolCalls)}</dd></div>
+                <div><dt>Tool iterations</dt><dd>{optionalNumber(row.toolIterations)}</dd></div>
+                <div><dt>Cancelled calls</dt><dd>{optionalNumber(row.cancelledToolCalls)}</dd></div>
+                <div><dt>Model calls</dt><dd>{optionalNumber(row.modelCalls)}</dd></div>
+                <div><dt>Input tokens</dt><dd>{optionalNumber(row.inputTokens)}</dd></div>
+                <div><dt>Output tokens</dt><dd>{optionalNumber(row.outputTokens)}</dd></div>
+                <div><dt>Cache-read tokens</dt><dd>{optionalNumber(row.cacheReadTokens)}</dd></div>
+                <div><dt>Cache hit rate</dt><dd>{percent(row.cacheHitRate)}</dd></div>
+                <div><dt>Model latency</dt><dd>{formatSeconds(row.modelLatencySeconds)}</dd></div>
+                <div><dt>Notebook valid</dt><dd>{row.notebookFormatOk == null ? '—' : row.notebookFormatOk ? 'Yes' : 'No'}</dd></div>
+              </dl>
+              <div className="tool-breakdown">
+                <h4>Tool breakdown</h4>
+                {tools.length ? tools.map(([name, metric]) => (
+                  <div className="tool-breakdown-row" key={name}>
+                    <strong>{humanize(name)}</strong>
+                    <span>{number(metric.calls)} calls</span>
+                    <span>{number(metric.successes)} succeeded</span>
+                    <span>{number(metric.errors + metric.parseErrors)} errors</span>
+                    <span>{formatSeconds(metric.latencySeconds)}</span>
+                  </div>
+                )) : <p>No tools used at this checkpoint.</p>}
+              </div>
+              {row.notebook ? (
+                <details className="notebook-disclosure">
+                  <summary>Full belief notebook</summary>
+                  <div className="notebook-content">{row.notebook}</div>
+                </details>
+              ) : <p className="notebook-missing">No belief notebook was recorded for this checkpoint.</p>}
+            </article>
+          )
+        })}
       </div>
     </section>
   )
@@ -857,6 +906,12 @@ function optionalNumber(value: number | null | undefined) {
   return isFiniteNumber(value) ? number(value) : '—'
 }
 
+function formatSeconds(value: number | null | undefined) {
+  if (!isFiniteNumber(value)) return '—'
+  if (value < 1) return `${Math.round(value * 1000)} ms`
+  return `${value.toFixed(1)} s`
+}
+
 function hasCheckpointTelemetry(row: TrajectoryRow) {
   return isFiniteNumber(row.toolCalls)
     || isFiniteNumber(row.searchCalls)
@@ -864,6 +919,7 @@ function hasCheckpointTelemetry(row: TrajectoryRow) {
     || isFiniteNumber(row.pythonCalls)
     || isFiniteNumber(row.inputTokens)
     || row.notebookFormatOk != null
+    || Boolean(row.notebook)
 }
 
 function heatColor(value: number | null | undefined, metric: Metric, minimum: number, maximum: number) {

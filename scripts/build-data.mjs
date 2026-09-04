@@ -19,6 +19,7 @@ const release = JSON.parse(await readFile(join(root, 'data.release.json'), 'utf8
 await rm(outputRoot, { recursive: true, force: true })
 await mkdir(join(outputRoot, 'questions'), { recursive: true })
 await mkdir(join(outputRoot, 'results'), { recursive: true })
+await mkdir(join(outputRoot, 'notebooks'), { recursive: true })
 
 const questions = [
   ...(await readJsonl(resolve(args.train))).map((row) => normalizeQuestion(row, 'train')),
@@ -57,6 +58,7 @@ for (let offset = 0; offset < questions.length; offset += CHUNK_SIZE) {
 const resultFiles = await discoverResultFiles(args.results ?? [])
 const runRows = []
 const trajectoryMap = new Map()
+const notebookMap = new Map()
 
 for (const file of resultFiles) {
   const rows = await readJsonl(file)
@@ -69,6 +71,15 @@ for (const file of resultFiles) {
     if (!eventToChunk.has(row.eventId)) continue
     if (!trajectoryMap.has(row.eventId)) trajectoryMap.set(row.eventId, [])
     trajectoryMap.get(row.eventId).push(toTrajectoryRow(row))
+    if (row.notebook) {
+      if (!notebookMap.has(row.eventId)) notebookMap.set(row.eventId, [])
+      notebookMap.get(row.eventId).push({
+        runId: row.runId,
+        rolloutIndex: row.rolloutIndex,
+        stepIndex: row.stepIndex,
+        notebook: row.notebook,
+      })
+    }
   }
 }
 
@@ -80,6 +91,15 @@ for (let offset = 0; offset < questions.length; offset += CHUNK_SIZE) {
     chunk[question.id] = (trajectoryMap.get(question.id) ?? []).sort(compareTrajectoryRows)
   }
   await writeJson(join(outputRoot, 'results', file), chunk)
+}
+
+for (const [eventId, notebooks] of notebookMap) {
+  await writeJson(
+    join(outputRoot, 'notebooks', `${encodeURIComponent(eventId)}.json`),
+    notebooks.sort((a, b) => a.runId.localeCompare(b.runId)
+      || a.rolloutIndex - b.rolloutIndex
+      || a.stepIndex - b.stepIndex),
+  )
 }
 
 const splitCounts = countBy(questions, (question) => question.split)
@@ -188,6 +208,7 @@ function normalizeResultRow(row) {
   const modelName = row.model_name ?? 'Unknown model'
   const metrics = row.metrics ?? {}
   const perTool = metrics.per_tool_metrics ?? {}
+  const finalResponse = typeof row.final_response === 'string' ? row.final_response : ''
   return {
     runId: row.run_id ?? `${modelName}.${row.mode ?? 'unknown'}`,
     modelName,
@@ -206,26 +227,56 @@ function normalizeResultRow(row) {
     truthProbability: numeric(row.p_truth),
     parseOk: Boolean(row.parse_ok),
     termination: row.termination ?? null,
+    toolIterations: numeric(metrics.tool_iters) ?? 0,
     toolCalls: numeric(metrics.tool_calls) ?? 0,
+    cancelledToolCalls: numeric(metrics.cancelled_tool_calls) ?? 0,
     searchCalls: numeric(perTool.search?.calls) ?? 0,
     scrapeCalls: numeric(perTool.scrape?.calls) ?? 0,
     pythonCalls: numeric(perTool.python?.calls) ?? 0,
+    tools: normalizeToolMetrics(perTool),
     modelCalls: numeric(metrics.model_calls) ?? 0,
     inputTokens: numeric(metrics.input_tokens?.total) ?? 0,
     outputTokens: numeric(metrics.output_tokens?.total) ?? 0,
     cacheReadTokens: numeric(metrics.cache_read_input_tokens?.total) ?? 0,
+    cacheHitRate: numeric(metrics.cache_hit_rate),
     modelLatencySeconds: numeric(metrics.model_latency_s?.total) ?? 0,
     notebookFormatOk: numeric(row.format_notebook_ok),
-    responsePresent: typeof row.final_response === 'string' && row.final_response.trim().length > 0,
+    notebook: extractLastTaggedBlock(finalResponse, 'belief_notebook'),
+    responsePresent: finalResponse.trim().length > 0,
   }
+}
+
+function normalizeToolMetrics(perTool) {
+  return Object.fromEntries(
+    Object.entries(perTool).map(([name, metric]) => [
+      name,
+      {
+        known: typeof metric?.is_known === 'boolean' ? metric.is_known : null,
+        calls: numeric(metric?.calls) ?? 0,
+        successes: numeric(metric?.successes) ?? 0,
+        errors: numeric(metric?.errors) ?? 0,
+        parseErrors: numeric(metric?.parse_errors) ?? 0,
+        latencySeconds: numeric(metric?.latency_s) ?? 0,
+      },
+    ]),
+  )
+}
+
+function extractLastTaggedBlock(text, tag) {
+  if (!text) return null
+  const pattern = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'g')
+  let value = null
+  for (const match of text.matchAll(pattern)) value = match[1].trim()
+  return value || null
 }
 
 function toTrajectoryRow(row) {
   const {
     responsePresent,
+    notebook,
     ...trajectoryRow
   } = row
-  return trajectoryRow
+  return { ...trajectoryRow, notebookAvailable: Boolean(notebook) }
 }
 
 function summarizeRun(file, rows) {

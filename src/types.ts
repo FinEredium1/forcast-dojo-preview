@@ -189,6 +189,15 @@ export interface AnalysisSummary {
   pairedModes: PairedModeComparison[]
 }
 
+export interface ToolUsageMetric {
+  known: boolean | null
+  calls: number
+  successes: number
+  errors: number
+  parseErrors: number
+  latencySeconds: number
+}
+
 export interface TrajectoryRow {
   runId: string
   modelName: string
@@ -207,14 +216,20 @@ export interface TrajectoryRow {
   truthProbability: number | null
   parseOk: boolean
   termination: string | null
+  toolIterations?: number
   toolCalls?: number
+  cancelledToolCalls?: number
   searchCalls?: number
   scrapeCalls?: number
   pythonCalls?: number
+  tools?: Record<string, ToolUsageMetric>
   modelCalls?: number
   inputTokens?: number
   outputTokens?: number
   cacheReadTokens?: number
+  cacheHitRate?: number | null
   modelLatencySeconds?: number
   notebookFormatOk?: number | null
+  notebookAvailable?: boolean
+  notebook?: string | null
 }

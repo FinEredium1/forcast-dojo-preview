@@ -7,6 +7,14 @@ let runSummariesPromise: Promise<RunSummary[]> | null = null
 let analysisPromise: Promise<AnalysisSummary> | null = null
 const questionChunkCache = new Map<string, Promise<QuestionDetail[]>>()
 const resultChunkCache = new Map<string, Promise<Record<string, TrajectoryRow[]>>>()
+const notebookCache = new Map<string, Promise<NotebookEntry[]>>()
+
+interface NotebookEntry {
+  runId: string
+  rolloutIndex: number
+  stepIndex: number
+  notebook: string
+}
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${base}${path}`)
@@ -49,5 +57,21 @@ export async function loadTrajectories(item: QuestionIndexItem) {
     resultChunkCache.set(item.chunk, getJson<Record<string, TrajectoryRow[]>>(`results/${item.chunk}`))
   }
   const results = await resultChunkCache.get(item.chunk)!
-  return results[item.id] ?? []
+  const rows = results[item.id] ?? []
+  if (!rows.some((row) => row.notebookAvailable)) return rows
+
+  if (!notebookCache.has(item.id)) {
+    notebookCache.set(item.id, getJson<NotebookEntry[]>(`notebooks/${encodeURIComponent(item.id)}.json`))
+  }
+  const notebooks = await notebookCache.get(item.id)!
+  const byCheckpoint = new Map(
+    notebooks.map((entry) => [
+      `${entry.runId}:${entry.rolloutIndex}:${entry.stepIndex}`,
+      entry.notebook,
+    ]),
+  )
+  return rows.map((row) => ({
+    ...row,
+    notebook: byCheckpoint.get(`${row.runId}:${row.rolloutIndex}:${row.stepIndex}`) ?? null,
+  }))
 }
