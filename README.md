@@ -1,60 +1,94 @@
-# Forecast Dojo frontend
+# Forecast Dojo website
 
-Static research website for comparing longitudinal LLM forecasts with contemporaneous prediction-market crowd probabilities.
+This is a frontend-only research website. GitHub Pages serves the application,
+questions, and compact cumulative summaries. Hugging Face serves full
+per-question forecasts, tool records, and belief notebooks on demand.
 
-## What the frontend publishes
+There is one evolving benchmark site. Monthly updates extend the same charts
+and question library; they do not create a separate page or selector for each
+month.
 
-- The complete question index and individual question records.
-- Model and crowd probabilities at each forecasting checkpoint.
-- Resolution outcomes and public evaluation metrics.
-- Model source category, forecast mode, run metadata, coverage, and release version.
+## Data layout
 
-The site deliberately does **not** publish raw model reasoning, belief notebooks, provider logs, the CC-News corpus, article text, or retrieval indexes.
+| Location | Published content | Why |
+| --- | --- | --- |
+| `public/data/` | Manifest, run summaries, analysis summary, question index, and question chunks | Small and immediately available on GitHub Pages |
+| Hugging Face `web/trajectories/` | One model-trajectory file per evaluation question | Loaded only when a question is opened |
+| Hugging Face `web/details/` | Full published notebooks and per-tool success/error/latency rows | Loaded only after the visitor requests full process records |
+| Hugging Face `data/` | Authoritative Parquet tables | Download and reproducibility |
 
-## Local development
+The 20M+ article CC-News corpus, retrieval indexes, search queries, raw model
+responses, credentials, and infrastructure configuration are not part of the
+website bundle.
 
-From `web/`:
+## Run locally
+
+From this `web` directory:
 
 ```powershell
 npm ci
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 4173
 ```
 
-The site uses hash routes (`#/results`, `#/questions`, and so on), so every route works on static hosting without rewrite rules.
+Open `http://127.0.0.1:4173/#/overview`. `npm ci` is needed after a fresh clone
+or dependency change, not on every run. Stop the server with `Ctrl+C` in its
+terminal.
 
-## Build a monthly data release
+The Overview, Results, Method, and question index use local files. Evaluation
+question trajectories require the generated `web/` assets to be present in the
+public Hugging Face dataset.
 
-1. Update `data.release.json` with the release version, label, and crowd baseline.
-2. Make sure the latest model result JSONL files are in the result directories you want to publish.
-3. From `web/`, generate the static public bundle:
+## Build a cumulative monthly update
 
-```powershell
-npm run data:build -- --train '..\..\forecast_train.jsonl' --eval '..\..\forecast_eval.jsonl' --results '..\results-n=1' --results '..\results-qwen-n=1'
-```
+The source dataset staging directory is `.hf_upload_staging/` at the repository
+root. It must contain the `questions`, `runs`, `forecasts`, `notebooks`, and
+`tool_usage` Parquet configurations plus `analysis/metrics.json`.
 
-Add another `--results <directory>` argument for each additional model-result directory. The exporter recreates `public/data/`, chunks the question and trajectory records, and strips private reasoning fields.
-
-The same command also generates `public/data/analysis-summary.json`, which contains precomputed question-clustered confidence intervals, domain and resolution-horizon breakdowns, matched sequential/independent comparisons, and best/worst question summaries. Raw responses, notebook text, search queries, logs, and article text are never copied into this file.
-
-If the public question and result chunks already exist and only the derived analysis needs to be refreshed, run:
+From this `web` directory:
 
 ```powershell
-npm run data:analysis
-```
-
-4. Inspect `public/data/manifest.json`, `public/data/results-summary.json`, and `public/data/analysis-summary.json`.
-5. Verify the production build:
-
-```powershell
+npm run data:site
 npm run build
 ```
 
-6. Commit the updated `public/data/` files with the code changes for that release.
+`data:site` writes:
 
-## GitHub Pages
+- compact files to `public/data/` for GitHub Pages;
+- large browser-friendly files to ignored `.hf_web_staging/web/` for Hugging
+  Face.
 
-The workflow at `.github/workflows/pages.yml` builds and deploys the site after changes reach `main`. It can also be run manually from the Actions tab.
+The exporter validates required inputs, derives checkpoint indices from the
+canonical dataset, keeps all historical and current runs in one summary, and
+bootstraps metric intervals by question. It cleans only the dedicated
+`.hf_web_staging` output directory.
 
-For the first deployment, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions**. The workflow supplies the repository base path to Vite automatically, so the same build works for project Pages and account Pages URLs.
+## Upload the generated Hugging Face web assets
 
-Only the roughly 5 MiB browser-safe bundle is deployed. Keep the 20-million-article CC-News corpus and its retrieval indexes in research storage, not in Git or GitHub Pages.
+After reviewing `.hf_web_staging/web/`, run this from the repository root:
+
+```powershell
+& 'C:\Users\21980\.local\bin\hf.exe' upload 'FinEredium1/Forecast-Dojo' '.hf_web_staging' '.' --repo-type dataset --commit-message 'Update Forecast Dojo web assets'
+```
+
+This command is intentionally not part of the build and is never run by GitHub
+Pages. Do not add `--create-pr` unless you want a Hub pull request; a draft pull
+request must be published before it can be merged.
+
+## Scoring contract
+
+- Accuracy and Brier use all observed forecast rows. Invalid recorded answers
+  retain their recorded failure scores.
+- Missing expected rows are reported as missing and are not imputed.
+- Information alpha uses valid forecasts with an available crowd probability.
+- Coverage is observed rows divided by expected rows.
+- Confidence intervals resample whole questions so repeated dates and rollouts
+  from one question stay correlated.
+- Historical one-repeat and current four-repeat protocols remain labeled in the
+  cumulative charts.
+
+## Static hosting
+
+The workflow at `.github/workflows/pages.yml` runs `npm ci` and `npm run build`.
+Hash routes (`#/results`, `#/questions`, and so on) work on GitHub Pages without
+server rewrites. The site fetches the public Hugging Face files directly in the
+browser and needs no API key or backend.

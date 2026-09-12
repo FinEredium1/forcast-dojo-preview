@@ -3,14 +3,23 @@ export type ForecastMode = 'sequential' | 'independent' | 'unknown'
 
 export interface CrowdSummary {
   name: string
-  brier: number
-  accuracy: number
+  brier: number | null
+  accuracy: number | null
   infoAlpha: number
   nRows: number
-  nScored: number
+  nScored: number | null
 }
 
 export interface Manifest {
+  resultLayout?: 'question'
+  evaluationQuestionCount?: number
+  evaluationCheckpointCount?: number
+  modelCount?: number
+  rolloutCount?: number
+  forecastCount?: number
+  expectedForecastCount?: number
+  missingForecastCount?: number
+  scoringPolicy?: string
   version: string
   label: string
   generatedAt: string
@@ -26,6 +35,12 @@ export interface Manifest {
     validRate: number
   }>
   crowd: CrowdSummary
+  huggingFace?: {
+    repository: string
+    datasetUrl: string
+    revision: string
+    webBase: string
+  }
 }
 
 export interface QuestionIndexItem {
@@ -56,6 +71,16 @@ export interface QuestionDetail extends QuestionIndexItem {
 }
 
 export interface RunSummary {
+  baseModel?: string
+  recency?: boolean
+  retrieval?: string
+  sourceRelease?: string
+  protocol?: string
+  rolloutCount?: number
+  nExpected?: number
+  nMissing?: number
+  avgUsd?: number | null
+  totalUsd?: number | null
   id: string
   modelName: string
   sourceType: SourceType
@@ -73,6 +98,7 @@ export interface RunSummary {
   avgSearchCalls?: number | null
   avgScrapeCalls?: number | null
   avgPythonCalls?: number | null
+  avgOtherToolCalls?: number | null
   avgModelCalls?: number | null
   totalInputTokens?: number
   avgInputTokens?: number | null
@@ -187,6 +213,55 @@ export interface AnalysisSummary {
   }
   runs: RunAnalysis[]
   pairedModes: PairedModeComparison[]
+  research?: {
+    consistency: ConsistencySummary[]
+    dynamics: DynamicsSummary[]
+    recency: RecencyComparison[]
+  }
+}
+
+export interface ConsistencySummary {
+  runId: string
+  modelName: string
+  sourceType: SourceType
+  mode: ForecastMode
+  retrieval: string
+  nGroups: number
+  nUsed: number
+  disagreement: number
+  brierSingle: number
+  brierEnsemble: number
+  ensembleGain: number
+  accuracySingle: number
+  accuracyEnsemble: number
+}
+
+export interface DynamicsSummary {
+  runId: string
+  modelName: string
+  sourceType: SourceType
+  retrieval: string
+  nEpisodes: number
+  excessMovement: number
+  interval: ConfidenceInterval
+  modelLeadDays: number
+  crowdLeadDays: number
+  finalAccuracy: number
+}
+
+export interface RecencyComparison {
+  modelName: string
+  sourceType: SourceType
+  mode: ForecastMode
+  nMatched: number
+  brierDifference: number
+  accuracyDifference: number
+  infoAlphaDifference: number
+  intervals: {
+    brierDifference: ConfidenceInterval
+    accuracyDifference: ConfidenceInterval
+    infoAlphaDifference: ConfidenceInterval
+  }
 }
 
 export interface ToolUsageMetric {
@@ -199,6 +274,13 @@ export interface ToolUsageMetric {
 }
 
 export interface TrajectoryRow {
+  baseModel?: string
+  recency?: boolean
+  retrieval?: string
+  sourceRelease?: string
+  protocol?: string
+  usdTotal?: number | null
+  repeatCount?: number
   runId: string
   modelName: string
   sourceType: SourceType
@@ -232,4 +314,37 @@ export interface TrajectoryRow {
   notebookFormatOk?: number | null
   notebookAvailable?: boolean
   notebook?: string | null
+}
+
+export interface NotebookDetailRow {
+  runId: string
+  modelName: string
+  mode: ForecastMode
+  retrieval: string
+  rolloutIndex: number
+  stepIndex: number
+  forecastDate: string | null
+  notebook: string
+  characters: number
+  blockCount: number
+  formatOk: boolean
+  jsonValid: boolean
+}
+
+export interface ToolDetailRow extends ToolUsageMetric {
+  runId: string
+  modelName: string
+  mode: ForecastMode
+  retrieval: string
+  rolloutIndex: number
+  stepIndex: number
+  forecastDate: string | null
+  toolName: string
+  canonicalTool: string
+}
+
+export interface QuestionProcessDetail {
+  eventId: string
+  notebooks: NotebookDetailRow[]
+  tools: ToolDetailRow[]
 }
