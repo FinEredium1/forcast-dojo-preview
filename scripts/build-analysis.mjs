@@ -238,7 +238,7 @@ function horizonKey(forecastDate, closeDate) {
 }
 
 function rowKey(row) {
-  return `${row.eventId}:${row.forecastDate ?? `step-${row.stepIndex ?? 0}`}`
+  return `${row.eventId}:${row.forecastDate ?? `step-${row.stepIndex ?? 0}`}:${row.rolloutIndex ?? 0}`
 }
 
 function difference(a, b) {

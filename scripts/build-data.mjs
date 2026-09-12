@@ -16,7 +16,12 @@ const root = resolve(import.meta.dirname, '..')
 const outputRoot = join(root, 'public', 'data')
 const release = JSON.parse(await readFile(join(root, 'data.release.json'), 'utf8'))
 
-await rm(outputRoot, { recursive: true, force: true })
+// Rebuild only the legacy generated directories; preserve unrelated cumulative site data.
+for (const directory of ['questions', 'results', 'notebooks']) {
+  const target = resolve(outputRoot, directory)
+  if (!target.startsWith(`${outputRoot}\\`) && !target.startsWith(`${outputRoot}/`)) throw new Error('Invalid output directory')
+  await rm(target, { recursive: true, force: true })
+}
 await mkdir(join(outputRoot, 'questions'), { recursive: true })
 await mkdir(join(outputRoot, 'results'), { recursive: true })
 await mkdir(join(outputRoot, 'notebooks'), { recursive: true })
@@ -198,7 +203,7 @@ async function discoverResultFiles(paths) {
     if (!existsSync(path)) continue
     const entries = await readdir(path, { withFileTypes: true })
     for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith('.jsonl')) files.push(join(path, entry.name))
+      if (entry.isFile() && entry.name.endsWith('.jsonl') && !entry.name.endsWith('.calls.jsonl')) files.push(join(path, entry.name))
     }
   }
   return files.sort()
