@@ -410,13 +410,49 @@ def research_summary(
                 },
             }
         )
-    return {"consistency": consistency, "dynamics": dynamics, "recency": recency}
+    murphy = []
+    for row in paper.get("headline", []):
+        run = summaries_by_arm_mode.get((row["arm"], row["mode"]))
+        components = row.get("murphy_classwise") or {}
+        crowd_components = row.get("crowd_murphy_classwise") or {}
+        component_keys = ("REL_per_row", "RES_per_row", "UNC_per_row", "brier_1sided_per_row", "n")
+        if not run or not all(finite(components.get(key)) for key in component_keys):
+            continue
+        if not all(finite(crowd_components.get(key)) for key in component_keys):
+            continue
+        murphy.append(
+            {
+                "runId": run["id"],
+                "modelName": run["modelName"],
+                "sourceType": run["sourceType"],
+                "mode": run["mode"],
+                "retrieval": run["retrieval"],
+                "reliability": components["REL_per_row"],
+                "resolution": components["RES_per_row"],
+                "uncertainty": components["UNC_per_row"],
+                "brier": components["brier_1sided_per_row"],
+                "n": int(components["n"]),
+                "crowd": {
+                    "reliability": crowd_components["REL_per_row"],
+                    "resolution": crowd_components["RES_per_row"],
+                    "uncertainty": crowd_components["UNC_per_row"],
+                    "brier": crowd_components["brier_1sided_per_row"],
+                    "n": int(crowd_components["n"]),
+                },
+            }
+        )
+    return {"consistency": consistency, "dynamics": dynamics, "recency": recency, "murphy": murphy}
 
 
 def build(args: argparse.Namespace) -> None:
     source = args.source.resolve()
     public = args.public_output.resolve()
     hf_output = args.hf_output.resolve()
+    paper_candidates = [
+        source / "analysis" / "metrics.json",
+        source / "analysis" / "paper_metrics" / "metrics.json",
+    ]
+    paper_path = next((path for path in paper_candidates if path.is_file()), paper_candidates[0])
     required = {
         "forecasts": source / "data" / "forecasts" / "forecasts.parquet",
         "notebooks": source / "data" / "notebooks" / "notebooks.parquet",
@@ -424,7 +460,7 @@ def build(args: argparse.Namespace) -> None:
         "questions_train": source / "data" / "questions" / "train.parquet",
         "runs": source / "data" / "runs" / "runs.parquet",
         "tools": source / "data" / "tool_usage" / "tool_usage.parquet",
-        "paper": source / "analysis" / "metrics.json",
+        "paper": paper_path,
         "dataset_manifest": source / "dataset_manifest.json",
     }
     missing = [str(path) for path in required.values() if not path.is_file()]

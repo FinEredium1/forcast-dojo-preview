@@ -13,6 +13,7 @@
     "data:site": "python scripts/build-site-data.py"
   },
   "dependencies": {
+    "@lobehub/icons-static-svg": "1.95.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

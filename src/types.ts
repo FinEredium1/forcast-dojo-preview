@@ -217,7 +217,25 @@ export interface AnalysisSummary {
     consistency: ConsistencySummary[]
     dynamics: DynamicsSummary[]
     recency: RecencyComparison[]
+    murphy?: MurphySummary[]
   }
+}
+
+export interface MurphyComponents {
+  reliability: number
+  resolution: number
+  uncertainty: number
+  brier: number
+  n: number
+}
+
+export interface MurphySummary extends MurphyComponents {
+  runId: string
+  modelName: string
+  sourceType: SourceType
+  mode: ForecastMode
+  retrieval: string
+  crowd: MurphyComponents
 }
 
 export interface ConsistencySummary {
