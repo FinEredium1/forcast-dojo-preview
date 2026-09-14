@@ -240,12 +240,12 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
     <>
       <PageIntro eyebrow="Benchmark analysis" title="Forecasting quality, memory, and research effort" copy="Compare each published model run with the contemporaneous market crowd across forecasting quality, resolution horizon, domain, and available research telemetry." />
 
-      {analysis ? <ModelFilteredAnalysisSection chartId="results-horizon" eyebrow="Resolution period" title="Accuracy as resolution approaches" description="Run accuracy at four pre-resolution horizons, keeping every model and forecasting mode distinct." note="Forecasts after the recorded close date are excluded from horizon analysis." runs={runs} eligibleRunIds={analysisRunIds}>
-        {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.horizonBuckets} field="byHorizon" metric="accuracy" />}
-      </ModelFilteredAnalysisSection> : null}
-
       {analysis ? <ModelFilteredAnalysisSection chartId="results-domain" eyebrow="Domain breakdown" title="Which model performs best in each domain?" description="Choose a domain to rank published runs by crowd-relative information alpha. Higher values indicate more forecasting information than the contemporaneous market." note="Leaders are the highest observed values, not claims of statistical significance. Question and checkpoint counts remain visible for context." runs={runs} eligibleRunIds={analysisRunIds} modeControl="compare" recencyControl="compare" defaultModelCount={8}>
         {({ visibleRunIds }) => <DomainLeaderboardChart analysisRuns={analysis.runs} runSummaries={runs} visibleRunIds={visibleRunIds} domains={analysis.domains} />}
+      </ModelFilteredAnalysisSection> : null}
+
+      {analysis ? <ModelFilteredAnalysisSection chartId="results-horizon" eyebrow="Resolution period" title="Accuracy as resolution approaches" description="Run accuracy at four pre-resolution horizons, keeping every model and forecasting mode distinct." note="Forecasts after the recorded close date are excluded from horizon analysis." runs={runs} eligibleRunIds={analysisRunIds}>
+        {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.horizonBuckets} field="byHorizon" metric="accuracy" />}
       </ModelFilteredAnalysisSection> : null}
 
       {analysis ? <ModelFilteredAnalysisSection chartId="results-question-type" eyebrow="Question types" title="Binary and multiple-choice performance" description="Accuracy separated by question format so changes in task composition remain visible." note="Each cell reports the mean across scored checkpoints in that question type." runs={runs} eligibleRunIds={analysisRunIds}>
