@@ -244,8 +244,8 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
         {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.horizonBuckets} field="byHorizon" metric="accuracy" />}
       </ModelFilteredAnalysisSection> : null}
 
-      {analysis ? <ModelFilteredAnalysisSection chartId="results-domain" eyebrow="Domain breakdown" title="Where models come closest to the crowd" description="Information alpha by domain. Values closer to or above zero indicate performance nearer to or better than the contemporaneous market baseline." note="Cells with fewer scored checkpoints should be interpreted cautiously." runs={runs} eligibleRunIds={analysisRunIds}>
-        {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.domains.map((key) => ({ key, label: humanize(key) }))} field="byDomain" metric="infoAlpha" />}
+      {analysis ? <ModelFilteredAnalysisSection chartId="results-domain" eyebrow="Domain breakdown" title="Which model performs best in each domain?" description="Choose a domain to rank published runs by crowd-relative information alpha. Higher values indicate more forecasting information than the contemporaneous market." note="Leaders are the highest observed values, not claims of statistical significance. Question and checkpoint counts remain visible for context." runs={runs} eligibleRunIds={analysisRunIds} modeControl="compare" recencyControl="compare" defaultModelCount={8}>
+        {({ visibleRunIds }) => <DomainLeaderboardChart analysisRuns={analysis.runs} runSummaries={runs} visibleRunIds={visibleRunIds} domains={analysis.domains} />}
       </ModelFilteredAnalysisSection> : null}
 
       {analysis ? <ModelFilteredAnalysisSection chartId="results-question-type" eyebrow="Question types" title="Binary and multiple-choice performance" description="Accuracy separated by question format so changes in task composition remain visible." note="Each cell reports the mean across scored checkpoints in that question type." runs={runs} eligibleRunIds={analysisRunIds}>
@@ -529,6 +529,88 @@ function BreakdownMatrix({ runs, keys, field, metric, visibleRunIds }: { runs: R
   )
 }
 
+function DomainLeaderboardChart({ analysisRuns, runSummaries, visibleRunIds, domains }: { analysisRuns: RunAnalysis[]; runSummaries: RunSummary[]; visibleRunIds?: string[]; domains: string[] }) {
+  const defaultDomain = [...domains].sort((a, b) => {
+    const questionsFor = (domain: string) => Math.max(0, ...analysisRuns.map((run) => run.byDomain.find((cell) => cell.key === domain)?.nQuestions ?? 0))
+    return questionsFor(b) - questionsFor(a)
+  })[0] ?? ''
+  const [activeDomain, setActiveDomain] = useState(defaultDomain)
+  const [inspectedRunId, setInspectedRunId] = useState<string | null>(null)
+  const summaryById = new Map(runSummaries.map((run) => [run.id, run]))
+  const groupByRunId = new Map<string, RunGroup>()
+  for (const group of groupRuns(runSummaries)) {
+    for (const run of group.runs) groupByRunId.set(run.id, group)
+  }
+
+  useEffect(() => {
+    if (!domains.includes(activeDomain)) setActiveDomain(defaultDomain)
+  }, [activeDomain, defaultDomain, domains.join('|')])
+
+  useEffect(() => {
+    setInspectedRunId(null)
+  }, [activeDomain])
+
+  const candidates = analysisRuns.flatMap((run) => {
+    const cell = run.byDomain.find((candidate) => candidate.key === activeDomain)
+    if (!cell || !isFiniteNumber(cell.infoAlpha) || cell.nScored <= 0) return []
+    const group = groupByRunId.get(run.runId)
+    return [{ run, cell, infoAlpha: cell.infoAlpha, summary: summaryById.get(run.runId), provider: group ? providerForGroup(group) : undefined }]
+  }).sort((a, b) => b.infoAlpha - a.infoAlpha || b.cell.nQuestions - a.cell.nQuestions || a.run.modelName.localeCompare(b.run.modelName))
+  const leader = candidates[0]
+  const visible = new Set(visibleRunIds ?? analysisRuns.map((run) => run.runId))
+  const ranked = candidates.filter((candidate) => visible.has(candidate.run.runId))
+  const inspected = candidates.find((candidate) => candidate.run.runId === inspectedRunId) ?? leader
+  const scale = Math.max(0.001, ...candidates.map((candidate) => Math.abs(candidate.infoAlpha)))
+
+  if (!domains.length || !leader) return <p className="chart-empty">No domain-level results are published yet.</p>
+
+  const providerMark = (provider: ModelProvider | undefined) => <span className="domain-provider-mark"><ProviderMark provider={provider} /></span>
+  const runContext = (candidate: typeof leader) => `${sourceLabel(candidate.run.sourceType)} · ${modeLabel(candidate.run.mode)} · ${retrievalLabel(candidate.summary?.retrieval)}`
+
+  return (
+    <figure className="domain-leaderboard">
+      <div className="domain-tabs" role="group" aria-label="Choose a forecasting domain">
+        {domains.map((domain) => <button key={domain} type="button" className={activeDomain === domain ? 'active' : ''} aria-pressed={activeDomain === domain} onClick={() => setActiveDomain(domain)}>{humanize(domain)}</button>)}
+      </div>
+
+      <div className="domain-leader-card">
+        <div className="domain-leader-identity">
+          <span className="domain-leader-kicker">{inspectedRunId ? 'Model detail' : `Observed leader · ${humanize(activeDomain)}`}</span>
+          <div className="domain-leader-model">{providerMark(inspected.provider)}<div><strong>{shortModelName(inspected.run.modelName)}</strong><span>{runContext(inspected)}</span></div></div>
+          {inspected.cell.nQuestions < 10 ? <span className="domain-small-sample">Small sample · {number(inspected.cell.nQuestions)} question{inspected.cell.nQuestions === 1 ? '' : 's'}</span> : null}
+        </div>
+        <dl className="domain-leader-metrics">
+          <div><dt>Information α</dt><dd>{signedDecimal(inspected.infoAlpha)}</dd></div>
+          <div><dt>Accuracy</dt><dd>{percent(inspected.cell.accuracy)}</dd></div>
+          <div><dt>Brier</dt><dd>{formatMetric(inspected.cell.brier, 'brier')}</dd></div>
+          <div><dt>Coverage</dt><dd>{percent(inspected.cell.coverage)}</dd></div>
+          <div><dt>Questions</dt><dd>{number(inspected.cell.nQuestions)}</dd></div>
+          <div><dt>Checkpoints</dt><dd>{number(inspected.cell.nScored)}</dd></div>
+        </dl>
+      </div>
+
+      {ranked.length ? (
+        <div className="domain-ranking">
+          <div className="domain-ranking-axis" aria-hidden="true"><span /><div><span>{signedDecimal(-scale)}</span><span>Crowd · 0.000</span><span>{signedDecimal(scale)}</span></div><span>Information α</span></div>
+          {ranked.map((candidate, index) => {
+            const width = `${Math.min(50, Math.abs(candidate.infoAlpha) / scale * 50)}%`
+            const barStyle = candidate.infoAlpha >= 0 ? { left: '50%', width } : { right: '50%', width }
+            const providerColor = candidate.provider?.color ?? '#7a7168'
+            const label = `${candidate.run.modelName}, ${runContext(candidate)}, information alpha ${signedDecimal(candidate.infoAlpha)}, accuracy ${percent(candidate.cell.accuracy)}, Brier ${formatMetric(candidate.cell.brier, 'brier')}, ${number(candidate.cell.nQuestions)} questions, ${number(candidate.cell.nScored)} checkpoints, ${percent(candidate.cell.coverage)} coverage`
+            return (
+              <article key={candidate.run.runId} className="domain-ranking-row" tabIndex={0} aria-label={label} onMouseEnter={() => setInspectedRunId(candidate.run.runId)} onMouseLeave={() => setInspectedRunId(null)} onFocus={() => setInspectedRunId(candidate.run.runId)} onBlur={() => setInspectedRunId(null)}>
+                <div className="domain-rank-identity"><span className="domain-rank-number">{index + 1}</span>{providerMark(candidate.provider)}<div><strong>{shortModelName(candidate.run.modelName)}</strong><span>{modeLabel(candidate.run.mode)} · {retrievalLabel(candidate.summary?.retrieval)}</span></div></div>
+                <div className="domain-score-track" aria-hidden="true"><span className="domain-score-zero" /><span className={`domain-score-bar ${candidate.infoAlpha >= 0 ? 'positive' : 'negative'}`} style={{ ...barStyle, backgroundColor: providerColor }} /></div>
+                <div className="domain-score-value"><strong>{signedDecimal(candidate.infoAlpha)}</strong>{candidate.cell.nQuestions < 10 ? <span>Small sample</span> : <span>{number(candidate.cell.nQuestions)} questions</span>}</div>
+              </article>
+            )
+          })}
+        </div>
+      ) : <div className="result-model-empty"><strong>No selected model has a result in {humanize(activeDomain)}.</strong><span>Use Add models or reset the filters to restore the ranking.</span></div>}
+    </figure>
+  )
+}
+
 function PairedModeChart({ comparisons, visibleGroupIds }: { comparisons: PairedModeComparison[]; visibleGroupIds?: string[] }) {
   const groupOrder = visibleGroupIds ? new Map(visibleGroupIds.map((id, index) => [id, index])) : null
   const ordered = [...comparisons]
@@ -673,7 +755,7 @@ type AnalysisRecencyControl = 'select' | 'compare'
 type AnalysisFigureSelection = { visibleGroupIds: string[]; visibleRunIds: string[]; activeMode: Exclude<ForecastMode, 'unknown'> }
 type AnalysisRunFamily = { representative: RunGroup; baseline?: RunGroup; recency?: RunGroup }
 
-function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, note, runs, eligibleRunIds, modeControl = 'select', recencyControl = 'select', children }: {
+function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, note, runs, eligibleRunIds, modeControl = 'select', recencyControl = 'select', defaultModelCount, children }: {
   chartId: string
   eyebrow: string
   title: string
@@ -683,6 +765,7 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
   eligibleRunIds: string[]
   modeControl?: AnalysisModeControl
   recencyControl?: AnalysisRecencyControl
+  defaultModelCount?: number
   children: (selection: AnalysisFigureSelection) => React.ReactNode
 }) {
   const eligible = new Set(eligibleRunIds)
@@ -705,7 +788,7 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
   const families = [...familyMap.values()]
   const groups = families.map((family) => family.representative)
   const familyByRepresentativeId = new Map(families.map((family) => [family.representative.id, family]))
-  const defaults = defaultResultGroupIds(groups)
+  const defaults = defaultResultGroupIds(groups).slice(0, defaultModelCount ?? groups.length)
   const [selectedIds, setSelectedIds] = useState<string[]>(() => defaults)
   const [modelSearch, setModelSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState<AccuracySourceFilter>('all')
