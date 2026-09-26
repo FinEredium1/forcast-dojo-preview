@@ -28,7 +28,7 @@ type ChartValueFormat = 'percent' | 'decimal' | 'count' | 'compact' | 'duration'
 type QuestionBrowseState = { query: string; domain: string; split: string; belief: string; page: number }
 
 const QUESTION_PAGE_SIZE = 48
-const PAPER_URL = 'https://arxiv.org/pdf/2505.07782'
+const PAPER_URL = 'https://arxiv.org/pdf/2609.28876v1'
 
 const metricDetails: Record<Metric, { label: string; direction: string; decimals: number }> = {
   brier: { label: 'Brier score', direction: 'Lower is better', decimals: 3 },
