@@ -1838,7 +1838,7 @@ function CheckpointActivity({ rows, fallbackDates, processState, processError, o
     <section className="checkpoint-activity" aria-labelledby="checkpoint-activity-title">
       <div><p className="eyebrow">Process record</p><h3 id="checkpoint-activity-title">Tools and belief notebooks</h3><p>Checkpoint totals are part of the lightweight trajectory. Full notebook text and the tool success, error, and latency breakdown load from Hugging Face only when requested.</p></div>
       <div className="process-load-row">
-        {processState === 'loaded' ? <span className="process-loaded">Full process records loaded</span> : <button className="button button-secondary process-button" type="button" disabled={processState === 'loading'} onClick={onLoadProcess}>{processState === 'loading' ? 'Loading from Hugging Face…' : processState === 'error' ? 'Retry full process records' : 'Load full notebooks & tool records'}</button>}
+        {processState === 'loaded' ? <span className="process-loaded">Full process records loaded</span> : <button className="button process-button" type="button" disabled={processState === 'loading'} aria-busy={processState === 'loading'} onClick={onLoadProcess}>{processState === 'loading' ? 'Loading from Hugging Face…' : processState === 'error' ? 'Retry full process records' : 'Load full notebooks & tool records'}</button>}
         {datasetUrl ? <a href={datasetUrl} target="_blank" rel="noreferrer">Open dataset ↗</a> : null}
       </div>
       {processError ? <p className="process-error" role="alert">{processError}</p> : null}
