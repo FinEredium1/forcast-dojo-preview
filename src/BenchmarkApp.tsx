@@ -299,8 +299,6 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
   runs = runs.filter((run) => run.retrieval === 'baseline')
   const hasToolMetrics = runs.some((run) => isFiniteNumber(run.avgToolCalls))
   const hasInputTokens = runs.some((run) => isFiniteNumber(run.avgInputTokens))
-  const hasOutputTokens = runs.some((run) => isFiniteNumber(run.avgOutputTokens))
-  const hasLatency = runs.some((run) => isFiniteNumber(run.avgModelLatencySeconds))
   const pairedModes = dedupePairedModes(analysis?.pairedModes ?? [])
   const analysisRunIds = runs.map((run) => run.id)
   const pairedModeRunIds = pairedModes.flatMap((row) => [row.independentRunId, row.sequentialRunId])
@@ -319,47 +317,44 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
         <TrainingFigure data={analysis.paperFigures.training} />
       </> : null}
 
-      {analysis ? <ModelFilteredAnalysisSection chartId="results-horizon" eyebrow="Resolution period" title="Accuracy as resolution approaches" description="Run accuracy at five pre-resolution horizons, keeping every model and forecasting mode distinct." note="Forecasts after the recorded close date are excluded from horizon analysis." runs={runs} eligibleRunIds={analysisRunIds}>
-        {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.horizonBuckets} field="byHorizon" metric="accuracy" />}
-      </ModelFilteredAnalysisSection> : null}
-
-      {analysis ? <ModelFilteredAnalysisSection chartId="results-question-type" eyebrow="Question types" title="Binary and multiple-choice performance" description="Accuracy separated by question format so changes in task composition remain visible." note="Each cell reports the mean across scored checkpoints in that question type." runs={runs} eligibleRunIds={analysisRunIds}>
-        {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.questionTypes.map((key) => ({ key, label: humanize(key) }))} field="byQuestionType" metric="accuracy" />}
-      </ModelFilteredAnalysisSection> : null}
-
       {pairedModes.length ? <ModelFilteredAnalysisSection chartId="results-memory" eyebrow="Forecast memory" title="Does a belief notebook help?" description="Memory-on and memory-free runs are matched at the same question, forecast date and repeat before their differences are calculated." note="Differences are Memory-on minus Memory-free; negative Brier differences are favorable." runs={runs} eligibleRunIds={pairedModeRunIds} modeControl="compare">
         {({ visibleGroupIds }) => <PairedModeChart comparisons={pairedModes} visibleGroupIds={visibleGroupIds} />}
       </ModelFilteredAnalysisSection> : null}
 
       {analysis?.paperFigures ? <MemoryCostFigure data={analysis.paperFigures.memoryCost} /> : null}
 
-      {analysis?.research?.consistency.length ? <ModelFilteredAnalysisSection chartId="results-consistency" eyebrow="Repeat reliability" title="Do repeated forecasts agree?" description="Four repeated forecasts expose run-to-run disagreement and show whether averaging the distributions improves Brier score." note="Brier improvement is Single-repeat Brier minus Averaged-forecast Brier; larger positive values favor averaging." runs={runs} eligibleRunIds={consistencyRunIds}>
-        {({ visibleRunIds }) => <ConsistencyChart rows={analysis.research!.consistency} visibleRunIds={visibleRunIds} />}
-      </ModelFilteredAnalysisSection> : null}
+      <div className="analysis-supporting-details">
+        {analysis ? <AnalysisDetails id="results-evaluation-details" title="Evaluation details" description="Forecast horizon · question format · repeat reliability">
+          {analysis ? <ModelFilteredAnalysisSection chartId="results-horizon" eyebrow="Resolution period" title="Accuracy as resolution approaches" description="Run accuracy at five pre-resolution horizons, keeping every model and forecasting mode distinct." note="Forecasts after the recorded close date are excluded from horizon analysis." runs={runs} eligibleRunIds={analysisRunIds}>
+            {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.horizonBuckets} field="byHorizon" metric="accuracy" />}
+          </ModelFilteredAnalysisSection> : null}
 
-      {hasToolMetrics ? <ModelFilteredAnalysisSection chartId="results-tools" eyebrow="Agent behavior" title="Tool calls per checkpoint" description="Average research activity for each run, separated into corpus searches, article scrapes, and Python executions." note="Normalized per forecast checkpoint so partial runs remain comparable" runs={runs} eligibleRunIds={runIdsWithMetric(runs, 'avgToolCalls')}>
-        {({ visibleRunIds }) => <ToolMixChart runs={runs} visibleRunIds={visibleRunIds} />}
-      </ModelFilteredAnalysisSection> : null}
+          {analysis ? <ModelFilteredAnalysisSection chartId="results-question-type" eyebrow="Question types" title="Binary and multiple-choice performance" description="Accuracy separated by question format so changes in task composition remain visible." note="Each cell reports the mean across scored checkpoints in that question type." runs={runs} eligibleRunIds={analysisRunIds}>
+            {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.questionTypes.map((key) => ({ key, label: humanize(key) }))} field="byQuestionType" metric="accuracy" />}
+          </ModelFilteredAnalysisSection> : null}
 
-      {hasInputTokens ? <ModelFilteredAnalysisSection chartId="results-input-tokens" eyebrow="Context consumption" title="Input tokens per checkpoint" description="Average number of input tokens processed across all model calls used to produce one forecast." note="Includes repeated context and, for memory-on runs, carried belief-notebook context" runs={runs} eligibleRunIds={runIdsWithMetric(runs, 'avgInputTokens')}>
-        {({ visibleRunIds }) => <GroupedRunChart runs={runs} visibleRunIds={visibleRunIds} metric="avgInputTokens" format="compact" minValue={0} />}
-      </ModelFilteredAnalysisSection> : null}
+          {analysis?.research?.consistency.length ? <ModelFilteredAnalysisSection chartId="results-consistency" eyebrow="Repeat reliability" title="Do repeated forecasts agree?" description="Four repeated forecasts expose run-to-run disagreement and show whether averaging the distributions improves Brier score." note="Brier improvement is Single-repeat Brier minus Averaged-forecast Brier; larger positive values favor averaging." runs={runs} eligibleRunIds={consistencyRunIds}>
+            {({ visibleRunIds }) => <ConsistencyChart rows={analysis.research!.consistency} visibleRunIds={visibleRunIds} />}
+          </ModelFilteredAnalysisSection> : null}
 
-      {hasOutputTokens ? <ModelFilteredAnalysisSection chartId="results-output-tokens" eyebrow="Response generation" title="Output tokens per checkpoint" description="Average output tokens generated across the agent loop for one forecast checkpoint." note="Visible and reasoning-token accounting depends on the model provider" runs={runs} eligibleRunIds={runIdsWithMetric(runs, 'avgOutputTokens')}>
-        {({ visibleRunIds }) => <GroupedRunChart runs={runs} visibleRunIds={visibleRunIds} metric="avgOutputTokens" format="compact" minValue={0} />}
-      </ModelFilteredAnalysisSection> : null}
+          <section className="analysis-evaluation-notes" id="evaluation-notes">
+            <h3>Scoring and uncertainty</h3>
+            <div className="mode-columns">
+              <article><h4>Question-clustered intervals</h4><p>Confidence intervals resample whole questions, because checkpoints from the same question share an outcome and information history.</p></article>
+              <article><h4>Scoring and coverage</h4><p>Unusable recorded forecasts receive uniform probabilities, following the paper. Missing records stay excluded and coverage remains visible.</p></article>
+            </div>
+          </section>
+        </AnalysisDetails> : null}
+        {hasToolMetrics || hasInputTokens ? <AnalysisDetails id="results-research-details" title="Research details" description="Tool use · input tokens">
+          {hasToolMetrics ? <ModelFilteredAnalysisSection chartId="results-tools" eyebrow="Agent behavior" title="Tool calls per checkpoint" description="Average research activity for each run, separated into corpus searches, article scrapes, and Python executions." note="Normalized per forecast checkpoint so partial runs remain comparable" runs={runs} eligibleRunIds={runIdsWithMetric(runs, 'avgToolCalls')}>
+            {({ visibleRunIds }) => <ToolMixChart runs={runs} visibleRunIds={visibleRunIds} />}
+          </ModelFilteredAnalysisSection> : null}
 
-      {hasLatency ? <ModelFilteredAnalysisSection chartId="results-latency" eyebrow="Execution profile" title="Model processing time per checkpoint" description="Average accumulated model-call latency required to complete one forecast checkpoint." note="Tool latency is tracked separately and is not included here" runs={runs} eligibleRunIds={runIdsWithMetric(runs, 'avgModelLatencySeconds')}>
-        {({ visibleRunIds }) => <GroupedRunChart runs={runs} visibleRunIds={visibleRunIds} metric="avgModelLatencySeconds" format="duration" minValue={0} />}
-      </ModelFilteredAnalysisSection> : null}
-
-      <section className="mode-note section-rule" id="evaluation-notes">
-        <div><p className="eyebrow">Evaluation integrity</p><h2>Read uncertainty and coverage together</h2></div>
-        <div className="mode-columns">
-          <article><h3>Question-clustered intervals</h3><p>Confidence intervals resample whole questions, because checkpoints from the same question share an outcome and information history.</p></article>
-          <article><h3>Scoring and coverage</h3><p>Unusable recorded forecasts receive uniform probabilities, following the paper. Missing records stay excluded and coverage remains visible.</p></article>
-        </div>
-      </section>
+          {hasInputTokens ? <ModelFilteredAnalysisSection chartId="results-input-tokens" eyebrow="Context consumption" title="Input tokens per checkpoint" description="Average number of input tokens processed across all model calls used to produce one forecast." note="Includes repeated context and, for memory-on runs, carried belief-notebook context" runs={runs} eligibleRunIds={runIdsWithMetric(runs, 'avgInputTokens')}>
+            {({ visibleRunIds }) => <GroupedRunChart runs={runs} visibleRunIds={visibleRunIds} metric="avgInputTokens" format="compact" minValue={0} />}
+          </ModelFilteredAnalysisSection> : null}
+        </AnalysisDetails> : null}
+      </div>
 
     </div>
   )
@@ -794,6 +789,15 @@ function MemoryChartCard({ title, formula, accent, className = '', children }: {
       </div>
       {children(memoryEnabled)}
     </article>
+  )
+}
+
+function AnalysisDetails({ id, title, description, children }: { id: string; title: string; description: string; children: React.ReactNode }) {
+  return (
+    <details className="analysis-detail-group" id={id}>
+      <summary><span><strong>{title}</strong><span>{description}</span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></summary>
+      <div className="analysis-detail-content">{children}</div>
+    </details>
   )
 }
 
