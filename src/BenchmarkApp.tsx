@@ -30,6 +30,14 @@ type QuestionBrowseState = { query: string; domain: string; split: string; belie
 
 const QUESTION_PAGE_SIZE = 48
 const PAPER_URL = 'https://arxiv.org/pdf/2609.28876v1'
+// Paper v1: Table 2 and Sections 3, 4.2, and 5.1.
+const PAPER_SCOPE = {
+  eventCount: 1338 + 230,
+  forecastStepCount: 5325 + 797,
+  modelCount: 12,
+  memoryModeCount: 2,
+  articleCount: '18.8M',
+}
 
 const metricDetails: Record<Metric, { label: string; direction: string; decimals: number }> = {
   brier: { label: 'Brier score', direction: 'Lower is better', decimals: 3 },
@@ -144,13 +152,11 @@ function Footer({ manifest }: { manifest: Manifest | null }) {
     <footer className="site-footer">
       <span>Forecast Dojo</span>
       <span>{manifest?.label ?? 'Versioned benchmark release'}</span>
-      <span>{manifest ? `${number(manifest.questionCount)} questions · ${number(manifest.checkpointCount)} checkpoints` : 'Loading release'}</span>
     </footer>
   )
 }
 
 function OverviewPage({ manifest, runs, analysis }: { manifest: Manifest; runs: RunSummary[]; analysis: AnalysisSummary | null }) {
-  const bestRun = bestByMetric(runs, 'brier')
   const murphy = analysis?.research?.murphy ?? []
   const hasCost = runs.some((run) => isFiniteNumber(run.avgUsd) && run.avgUsd > 0 && isFiniteNumber(run.infoAlpha))
 
@@ -165,32 +171,23 @@ function OverviewPage({ manifest, runs, analysis }: { manifest: Manifest; runs: 
             <a href={releaseHref('#/results')}>Explore results <span aria-hidden="true">↗</span></a>
           </div>
         </div>
-        <aside className="hero-readout" aria-label="Current benchmark readout">
-          <span>{manifest.label}</span>
-          <strong>Brier score <span aria-label="Lower is better">↓</span></strong>
-          <dl className="hero-score-comparison">
-            <div><dt>Historical market belief</dt><dd>{formatMetric(manifest.crowd.brier, 'brier')}</dd></div>
-            <div><dt>Best observed model<small>{bestRun ? `${bestRun.modelName} · ${modeLabel(bestRun.mode)}` : 'Awaiting scored runs'}</small></dt><dd>{formatMetric(bestRun?.brier, 'brier')}</dd></div>
-          </dl>
-        </aside>
+        <PaperOverviewFigure />
       </section>
 
       <section className="highlight-section overview-results-stack section-rule" aria-label="Benchmark results">
         <MemoryChartCard title="Brier score" formula="brier" accent="activity" className="accuracy-card">
           {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.brier} metric="brier" memoryEnabled={memoryEnabled} />}
         </MemoryChartCard>
-        <MemoryChartCard title="Accuracy" formula="accuracy" accent="quality" className="accuracy-card">
+        <MemoryChartCard title="Accuracy" formula="accuracy" accent="quality" className="accuracy-card accuracy-metric-card">
           {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.accuracy} metric="accuracy" memoryEnabled={memoryEnabled} />}
         </MemoryChartCard>
       </section>
-
-      <PaperOverviewFigure />
 
       <section className="highlight-section overview-results-stack overview-supporting-results section-rule" aria-label="Further benchmark analysis">
         <MemoryChartCard title="Information alpha" formula="infoAlpha" accent="tokens" className="accuracy-card">
           {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.infoAlpha} metric="infoAlpha" memoryEnabled={memoryEnabled} />}
         </MemoryChartCard>
-        {murphy.length ? <MemoryChartCard title="Murphy decomposition" formula="murphy" accent="quality" className="accuracy-card research-scatter-card">
+        {murphy.length ? <MemoryChartCard title="Murphy decomposition" formula="murphy" accent="quality" className="accuracy-card research-scatter-card murphy-metric-card">
           {(memoryEnabled) => <ResearchScatterChart runs={runs} murphy={murphy} kind="murphy" memoryEnabled={memoryEnabled} />}
         </MemoryChartCard> : null}
         {hasCost ? <MemoryChartCard title="Information alpha vs. cost" accent="activity" className="accuracy-card research-scatter-card">
@@ -198,7 +195,46 @@ function OverviewPage({ manifest, runs, analysis }: { manifest: Manifest; runs: 
         </MemoryChartCard> : null}
       </section>
 
+      <section className="stat-grid section-rule" aria-label="Paper benchmark scope">
+        <Stat value={number(PAPER_SCOPE.eventCount)} label="forecasting events" />
+        <Stat value={number(PAPER_SCOPE.forecastStepCount)} label="dated forecast steps" />
+        <Stat value={number(PAPER_SCOPE.modelCount)} label="models evaluated" />
+        <Stat value={number(PAPER_SCOPE.memoryModeCount)} label="memory modes" />
+        <Stat value={PAPER_SCOPE.articleCount} label="news articles in corpus" />
+      </section>
+
+      <OverviewStudyDesign />
+
     </>
+  )
+}
+
+function Stat({ value, label }: { value: string; label: string }) {
+  return <article><span className="stat-value">{value}</span><span className="stat-label">{label}</span></article>
+}
+
+function OverviewStudyDesign() {
+  return (
+    <section className="overview-study section-rule" aria-label="Study design and forecast memory">
+      <article className="overview-study-design">
+        <p className="eyebrow">Study design</p>
+        <h2>Replay · research · forecast</h2>
+        <ol className="overview-study-steps">
+          <li><span aria-hidden="true">01</span><div><h3>Replay an event</h3><p>Fixed forecast dates; outcomes hidden from agents.</p></div></li>
+          <li><span aria-hidden="true">02</span><div><h3>Research dated evidence</h3><p>Search, read and compute over CC-News available by that date.</p></div></li>
+          <li><span aria-hidden="true">03</span><div><h3>Score probabilities</h3><p>Brier, accuracy and Information α; historical market belief as a reference.</p></div></li>
+        </ol>
+      </article>
+      <article className="overview-study-memory">
+        <p className="eyebrow">Secondary analysis</p>
+        <h2>Does a belief notebook help?</h2>
+        <p className="overview-memory-context">Same events, forecast dates and tools. Two memory modes.</p>
+        <div className="overview-memory-modes">
+          <div className="overview-memory-free"><h3>Memory-free</h3><p>Each forecast step starts fresh, with no information carried from earlier steps.</p></div>
+          <div className="overview-memory-on"><h3>Memory-on</h3><p>Only the belief notebook carries forward: assessment, evidence and open questions.</p></div>
+        </div>
+      </article>
+    </section>
   )
 }
 
@@ -208,14 +244,10 @@ function PaperOverviewFigure() {
   const description = 'Figure 1 from the paper: curate historical events and dated news, forecast each question over time, research with date-limited tools and optional belief notebooks, then score hidden outcomes for evaluation and training.'
 
   return (
-    <figure className="paper-overview-figure section-rule" id="environment">
-      <button className="paper-figure-preview" type="button" onClick={() => dialogRef.current?.showModal()} aria-label="Enlarge Figure 1">
-        <img src={figureUrl} width="2800" height="1989" alt={description} loading="lazy" />
+    <figure className="paper-overview-figure" id="environment">
+      <button className="paper-figure-preview" type="button" onClick={() => dialogRef.current?.showModal()} aria-label="Enlarge Figure 1" title="Click to enlarge Figure 1">
+        <img src={figureUrl} width="2800" height="1989" alt={description} fetchPriority="high" />
       </button>
-      <figcaption>
-        <a href={`${PAPER_URL}#page=3`} target="_blank" rel="noopener noreferrer">Figure 1 · Paper overview <span aria-hidden="true">↗</span></a>
-        <button type="button" onClick={() => dialogRef.current?.showModal()}>Enlarge <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6" /></svg></button>
-      </figcaption>
       <dialog className="paper-figure-dialog" ref={dialogRef} aria-label="Figure 1: Overview of Forecast Dojo" onClick={(event) => { if (event.target === event.currentTarget) dialogRef.current?.close() }}>
         <div className="paper-figure-dialog-header"><span>Forecast Dojo environment</span><button type="button" aria-label="Close figure" onClick={() => dialogRef.current?.close()}>Close <span aria-hidden="true">×</span></button></div>
         <div className="paper-figure-enlarged"><img src={figureUrl} width="2800" height="1989" alt={description} /></div>
@@ -236,9 +268,7 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
   const dynamicsRunIds = analysis?.research?.dynamics.map((row) => row.runId) ?? []
 
   return (
-    <>
-      <PageIntro eyebrow="Benchmark analysis" title="Forecasting quality, memory, and research effort" copy="Compare each published model run with the contemporaneous market crowd across forecasting quality, resolution horizon, domain, and available research telemetry." />
-
+    <div className="analysis-page">
       {analysis ? <ModelFilteredAnalysisSection chartId="results-domain" eyebrow="Domain breakdown" title="Which model performs best in each domain?" description="Choose a domain to rank published runs by crowd-relative information alpha. Higher values indicate more forecasting information than the contemporaneous market." note="Leaders are the highest observed values, not claims of statistical significance. Question and checkpoint counts remain visible for context." runs={runs} eligibleRunIds={analysisRunIds} modeControl="compare" defaultModelCount={8}>
         {({ visibleRunIds }) => <DomainLeaderboardChart analysisRuns={analysis.runs} runSummaries={runs} visibleRunIds={visibleRunIds} domains={analysis.domains} />}
       </ModelFilteredAnalysisSection> : null}
@@ -287,7 +317,7 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
         </div>
       </section>
 
-    </>
+    </div>
   )
 }
 
@@ -312,7 +342,7 @@ function QuestionsPage({ questions, manifest, route }: { questions: QuestionInde
   }, [query, domain, split, belief, safePage])
 
   return (
-    <>
+    <div className="questions-page">
       <PageIntro eyebrow="Question explorer" title={`Browse all ${number(manifest.questionCount)} questions`} copy="Explore questions, resolution outcomes, and forecasts made at each date. Model results are available for evaluation questions." />
       <section className="question-filters section-rule" aria-label="Question filters">
         <label className="search-field"><span>Search</span><input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="Search question text or ID" /></label>
@@ -329,7 +359,7 @@ function QuestionsPage({ questions, manifest, route }: { questions: QuestionInde
         </div>
         <Pagination page={safePage} count={pageCount} onChange={setPage} />
       </section>
-    </>
+    </div>
   )
 }
 
@@ -423,7 +453,7 @@ function QuestionDetailPage({ item, questions, browseState, manifest, runSummari
   }
 
   return (
-    <>
+    <div className="questions-page question-detail-page">
       <section className="detail-hero section-rule">
         <div className="question-detail-nav">
           <a className="back-link" href={questionListHref(stateForPosition(sequencePosition))}>← Back to questions</a>
@@ -480,7 +510,7 @@ function QuestionDetailPage({ item, questions, browseState, manifest, runSummari
           </dl>
         </aside>
       </section>
-    </>
+    </div>
   )
 }
 
@@ -529,12 +559,10 @@ function BreakdownMatrix({ runs, keys, field, metric, visibleRunIds }: { runs: R
 }
 
 function DomainLeaderboardChart({ analysisRuns, runSummaries, visibleRunIds, domains }: { analysisRuns: RunAnalysis[]; runSummaries: RunSummary[]; visibleRunIds?: string[]; domains: string[] }) {
-  const defaultDomain = [...domains].sort((a, b) => {
-    const questionsFor = (domain: string) => Math.max(0, ...analysisRuns.map((run) => run.byDomain.find((cell) => cell.key === domain)?.nQuestions ?? 0))
-    return questionsFor(b) - questionsFor(a)
-  })[0] ?? ''
-  const [activeDomain, setActiveDomain] = useState(defaultDomain)
+  const [activeDomain, setActiveDomain] = useState('all')
+  const activeDomainLabel = activeDomain === 'all' ? 'All Domain' : humanize(activeDomain)
   const [inspectedRunId, setInspectedRunId] = useState<string | null>(null)
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const summaryById = new Map(runSummaries.map((run) => [run.id, run]))
   const groupByRunId = new Map<string, RunGroup>()
   for (const group of groupRuns(runSummaries)) {
@@ -542,15 +570,15 @@ function DomainLeaderboardChart({ analysisRuns, runSummaries, visibleRunIds, dom
   }
 
   useEffect(() => {
-    if (!domains.includes(activeDomain)) setActiveDomain(defaultDomain)
-  }, [activeDomain, defaultDomain, domains.join('|')])
+    if (activeDomain !== 'all' && !domains.includes(activeDomain)) setActiveDomain('all')
+  }, [activeDomain, domains.join('|')])
 
   useEffect(() => {
     setInspectedRunId(null)
   }, [activeDomain])
 
   const candidates = analysisRuns.flatMap((run) => {
-    const cell = run.byDomain.find((candidate) => candidate.key === activeDomain)
+    const cell = activeDomain === 'all' ? run.overall : run.byDomain.find((candidate) => candidate.key === activeDomain)
     if (!cell || !isFiniteNumber(cell.infoAlpha) || cell.nScored <= 0) return []
     const group = groupByRunId.get(run.runId)
     return [{ run, cell, infoAlpha: cell.infoAlpha, summary: summaryById.get(run.runId), provider: group ? providerForGroup(group) : undefined }]
@@ -558,10 +586,15 @@ function DomainLeaderboardChart({ analysisRuns, runSummaries, visibleRunIds, dom
   const leader = candidates[0]
   const visible = new Set(visibleRunIds ?? analysisRuns.map((run) => run.runId))
   const ranked = candidates.filter((candidate) => visible.has(candidate.run.runId))
-  const inspected = candidates.find((candidate) => candidate.run.runId === inspectedRunId) ?? leader
+  const selected = ranked.find((candidate) => candidate.run.runId === selectedRunId)
+  const inspected = selected ?? candidates.find((candidate) => candidate.run.runId === inspectedRunId) ?? leader
   const scale = Math.max(0.001, ...candidates.map((candidate) => Math.abs(candidate.infoAlpha)))
 
-  if (!domains.length || !leader) return <p className="chart-empty">No domain-level results are published yet.</p>
+  useEffect(() => {
+    if (selectedRunId && !selected) setSelectedRunId(null)
+  }, [selectedRunId, selected?.run.runId])
+
+  if (!leader) return <p className="chart-empty">No domain-level results are published yet.</p>
 
   const providerMark = (provider: ModelProvider | undefined) => <span className="domain-provider-mark"><ProviderMark provider={provider} /></span>
   const runContext = (candidate: typeof leader) => `${sourceLabel(candidate.run.sourceType)} · ${modeLabel(candidate.run.mode)} · ${retrievalLabel(candidate.summary?.retrieval)}`
@@ -569,12 +602,13 @@ function DomainLeaderboardChart({ analysisRuns, runSummaries, visibleRunIds, dom
   return (
     <figure className="domain-leaderboard">
       <div className="domain-tabs" role="group" aria-label="Choose a forecasting domain">
+        <button type="button" className={activeDomain === 'all' ? 'active' : ''} aria-pressed={activeDomain === 'all'} onClick={() => setActiveDomain('all')}>All Domain</button>
         {domains.map((domain) => <button key={domain} type="button" className={activeDomain === domain ? 'active' : ''} aria-pressed={activeDomain === domain} onClick={() => setActiveDomain(domain)}>{humanize(domain)}</button>)}
       </div>
 
       <div className="domain-leader-card">
         <div className="domain-leader-identity">
-          <span className="domain-leader-kicker">{inspectedRunId ? 'Model detail' : `Observed leader · ${humanize(activeDomain)}`}</span>
+          <span className="domain-leader-kicker">{selected ? `Selected model · ${activeDomainLabel}` : inspectedRunId ? 'Model detail' : `Observed leader · ${activeDomainLabel}`}</span>
           <div className="domain-leader-model">{providerMark(inspected.provider)}<div><strong>{shortModelName(inspected.run.modelName)}</strong><span>{runContext(inspected)}</span></div></div>
           {inspected.cell.nQuestions < 10 ? <span className="domain-small-sample">Small sample · {number(inspected.cell.nQuestions)} question{inspected.cell.nQuestions === 1 ? '' : 's'}</span> : null}
         </div>
@@ -597,15 +631,15 @@ function DomainLeaderboardChart({ analysisRuns, runSummaries, visibleRunIds, dom
             const providerColor = candidate.provider?.color ?? '#7a7168'
             const label = `${candidate.run.modelName}, ${runContext(candidate)}, information alpha ${signedDecimal(candidate.infoAlpha)}, accuracy ${percent(candidate.cell.accuracy)}, Brier ${formatMetric(candidate.cell.brier, 'brier')}, ${number(candidate.cell.nQuestions)} questions, ${number(candidate.cell.nScored)} checkpoints, ${percent(candidate.cell.coverage)} coverage`
             return (
-              <article key={candidate.run.runId} className="domain-ranking-row" tabIndex={0} aria-label={label} onMouseEnter={() => setInspectedRunId(candidate.run.runId)} onMouseLeave={() => setInspectedRunId(null)} onFocus={() => setInspectedRunId(candidate.run.runId)} onBlur={() => setInspectedRunId(null)}>
+              <button key={candidate.run.runId} type="button" className={`domain-ranking-row${selectedRunId === candidate.run.runId ? ' selected' : ''}`} aria-label={label} aria-pressed={selectedRunId === candidate.run.runId} onClick={() => setSelectedRunId((current) => current === candidate.run.runId ? null : candidate.run.runId)} onMouseEnter={() => setInspectedRunId(candidate.run.runId)} onMouseLeave={() => setInspectedRunId(null)} onFocus={() => setInspectedRunId(candidate.run.runId)} onBlur={() => setInspectedRunId(null)}>
                 <div className="domain-rank-identity"><span className="domain-rank-number">{index + 1}</span>{providerMark(candidate.provider)}<div><strong>{shortModelName(candidate.run.modelName)}</strong><span>{modeLabel(candidate.run.mode)} · {retrievalLabel(candidate.summary?.retrieval)}</span></div></div>
                 <div className="domain-score-track" aria-hidden="true"><span className="domain-score-zero" /><span className={`domain-score-bar ${candidate.infoAlpha >= 0 ? 'positive' : 'negative'}`} style={{ ...barStyle, backgroundColor: providerColor }} /></div>
                 <div className="domain-score-value"><strong>{signedDecimal(candidate.infoAlpha)}</strong>{candidate.cell.nQuestions < 10 ? <span>Small sample</span> : <span>{number(candidate.cell.nQuestions)} questions</span>}</div>
-              </article>
+              </button>
             )
           })}
         </div>
-      ) : <div className="result-model-empty"><strong>No selected model has a result in {humanize(activeDomain)}.</strong><span>Use Add models or reset the filters to restore the ranking.</span></div>}
+      ) : <div className="result-model-empty"><strong>No selected model has a result in {activeDomainLabel}.</strong><span>Use Add models or reset the filters to restore the ranking.</span></div>}
     </figure>
   )
 }
@@ -1818,7 +1852,7 @@ function CheckpointActivity({ rows, fallbackDates, processState, processError, o
               {row.notebook ? (
                 <details className="notebook-disclosure">
                   <summary>Full belief notebook</summary>
-                  <div className="notebook-content">{row.notebook}</div>
+                  <BeliefNotebook content={row.notebook} />
                 </details>
               ) : <p className="notebook-missing">{row.mode === 'independent' ? 'Memory-free runs do not carry a belief notebook between forecast steps.' : row.notebookAvailable && processState !== 'loaded' ? 'This notebook is available on Hugging Face; load the full process records above to view it.' : 'No notebook text was recorded for this checkpoint.'}</p>}
             </article>
@@ -1831,6 +1865,39 @@ function CheckpointActivity({ rows, fallbackDates, processState, processError, o
 
 function ProbabilityBar({ label, value, tone }: { label: string; value: number | null; tone: 'model' | 'crowd' }) {
   return <div className="probability-line"><div><span>{label}</span><strong>{percent(value)}</strong></div><div className="probability-track" aria-hidden="true"><span className={tone} style={{ width: `${Math.max(0, Math.min(100, (value ?? 0) * 100))}%` }} /></div></div>
+}
+
+function BeliefNotebook({ content }: { content: string }) {
+  const formatted = useMemo(() => {
+    try {
+      return JSON.stringify(JSON.parse(content), null, 2)
+    } catch {
+      return null
+    }
+  }, [content])
+
+  if (formatted == null) return <pre className="notebook-content">{content}</pre>
+  const lines = formatted.split('\n')
+
+  return (
+    <pre className="notebook-content notebook-json" aria-label="Formatted belief notebook"><code>{lines.map((line, lineIndex) => {
+      const tokens: React.ReactNode[] = []
+      const tokenPattern = /"(?:\\.|[^"\\])*"|\b(?:true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g
+      let cursor = 0
+      for (const match of line.matchAll(tokenPattern)) {
+        const index = match.index!
+        if (index > cursor) tokens.push(line.slice(cursor, index))
+        const value = match[0]
+        const end = index + value.length
+        const kind = value.startsWith('"') ? /^\s*:/.test(line.slice(end)) ? 'key' : 'string' : value === 'null' ? 'null' : value === 'true' || value === 'false' ? 'boolean' : 'number'
+        tokens.push(<span key={index} className={`json-${kind}`}>{value}</span>)
+        cursor = end
+      }
+      if (cursor < line.length) tokens.push(line.slice(cursor))
+      const indent = line.length - line.trimStart().length
+      return <span className="notebook-json-line" key={lineIndex} style={{ '--json-indent': `${indent}ch` } as React.CSSProperties}>{tokens}{lineIndex < lines.length - 1 ? '\n' : ''}</span>
+    })}</code></pre>
+  )
 }
 
 function DataError({ message }: { message: string }) {
@@ -1902,10 +1969,6 @@ function compareMetric(a: RunSummary, b: RunSummary, metric: Metric) {
   if (aValue == null) return 1
   if (bValue == null) return -1
   return metric === 'brier' ? aValue - bValue : bValue - aValue
-}
-
-function bestByMetric(runs: RunSummary[], metric: Metric) {
-  return [...runs].sort((a, b) => compareMetric(a, b, metric))[0]
 }
 
 function formatMetric(value: number | null | undefined, metric: Metric) {

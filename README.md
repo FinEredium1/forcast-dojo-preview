@@ -44,9 +44,16 @@ public Hugging Face dataset.
 [the September 2026 paper](https://arxiv.org/pdf/2609.28876v1#page=3).
 It was extracted from the figure's PDF form object and rendered at 2800 × 1989
 pixels, then encoded as lossless WebP. Its labels and counts follow the paper;
-the result charts and header comparison use the site's published release data.
-The overview places the figure after Brier and Accuracy, with an enlarged,
-keyboard-accessible view. Its main call to action opens the paper.
+the result charts use the site's published release data.
+The overview places the figure beside the title, with an enlarged,
+keyboard-accessible view. Its main call to action opens the paper. A bottom
+scope strip reports the paper's event, forecast-step, model, memory-mode, and
+corpus counts. A compact study-design and memory-mode section follows it.
+
+Analysis opens with a domain ranking, including the published overall aggregate
+under All Domain. Clicking a run pins its metrics until another run is selected
+or it is deselected. Full belief notebooks display indented, syntax-colored JSON;
+non-JSON notebook text is preserved.
 
 ## Build a cumulative monthly update
 
