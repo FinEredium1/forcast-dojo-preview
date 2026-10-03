@@ -1,4 +1,4 @@
-"""Build the cumulative static-site summaries and Hugging Face web assets.
+"""Build the paper-v1 static-site summaries and Hugging Face web assets.
 
 Small, frequently used files are written to ``web/public/data`` for GitHub
 Pages. Large per-question trajectories, notebooks, and detailed tool records
@@ -19,13 +19,14 @@ import shutil
 from typing import Any, Iterable
 
 import pyarrow.parquet as pq
+from paper_analysis import score_row, paired_modes as recompute_pairs, research_summary as recompute_research
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 WEB_ROOT = pathlib.Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE = REPO_ROOT / ".hf_upload_staging"
+DEFAULT_SOURCE = REPO_ROOT / ".hf_paper_upload_staging"
 DEFAULT_PUBLIC = WEB_ROOT / "public" / "data"
-DEFAULT_HF_OUTPUT = REPO_ROOT / ".hf_web_staging"
+DEFAULT_HF_OUTPUT = REPO_ROOT / ".hf_paper_web_staging"
 HORIZON_BUCKETS = [
     ("le3", "≤ 3 days"),
     ("4to7", "4–7 days"),
@@ -79,7 +80,9 @@ def horizon_key(forecast_date: str | None, close_date: str | None) -> str:
     close = date_value(close_date)
     if forecast is None or close is None:
         return "unknown"
-    days = max(0, (close - forecast).days)
+    days = (close - forecast).days
+    if days < 0:
+        return "unknown"
     if days <= 3:
         return "le3"
     if days <= 7:
@@ -93,8 +96,11 @@ def horizon_key(forecast_date: str | None, close_date: str | None) -> str:
 
 def safe_clean_directory(path: pathlib.Path) -> None:
     resolved = path.resolve()
-    if resolved in {REPO_ROOT.resolve(), WEB_ROOT.resolve(), pathlib.Path(resolved.anchor)}:
+    if not resolved.is_relative_to(REPO_ROOT.resolve()) or resolved in {REPO_ROOT.resolve(), WEB_ROOT.resolve(), WEB_ROOT / "public", DEFAULT_PUBLIC}:
         raise ValueError(f"Refusing to clean broad output path: {resolved}")
+    dedicated = {DEFAULT_HF_OUTPUT.resolve(), (DEFAULT_PUBLIC / "questions").resolve()}
+    if resolved.exists() and any(resolved.iterdir()) and resolved not in dedicated:
+        raise ValueError(f"Refusing to replace a nonempty directory outside the dedicated outputs: {resolved}")
     if resolved.exists():
         shutil.rmtree(resolved)
     resolved.mkdir(parents=True, exist_ok=True)
@@ -114,16 +120,47 @@ def read_jsonl(path: pathlib.Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in stream if line.strip()]
 
 
-def model_arm(run_id: str) -> str:
-    arm = run_id.split(".forecast_eval.", 1)[0]
-    return arm[:-5] if arm.endswith("-code") else arm
+MODEL_LABELS = {
+    "deepseek-v3.2-think": "DeepSeek V3.2", "glm-5-think": "GLM-5",
+    "gpt-5.4": "GPT-5.4", "gpt-5.5": "GPT-5.5", "gpt-5.6-sol": "GPT-5.6 Sol",
+    "gpt-oss-120b": "gpt-oss-120b", "kimi-k2.5-think": "Kimi K2.5",
+    "minimax-m2.5": "MiniMax M2.5", "nemotron-3-super-think": "Nemotron 3 Super",
+    "opus-4.6-think": "Opus 4.6", "opus-4.8-think-max": "Opus 4.8 max",
+    "qwen3.5-397b-think-t1": "Qwen3.5 397B",
+}
 
 
-def model_label(run: dict[str, Any], paper_headlines: dict[tuple[str, str], dict[str, Any]]) -> str:
-    headline = paper_headlines.get((model_arm(run["run_id"]), run["mode"]))
-    if headline:
-        return str(headline["label"]).strip()
-    return str(run["model_name"])
+def model_label(run: dict[str, Any]) -> str:
+    base = run["model_name"].removesuffix("-code").removesuffix("-notool")
+    return MODEL_LABELS[base]
+
+
+def write_questions(public, questions):
+    questions = sorted(questions, key=lambda q: str(q["event_id"]))
+    safe_clean_directory(public / "questions")
+    index = []
+    for start in range(0, len(questions), 100):
+        chunk = f"chunk-{start // 100:03d}.json"
+        details = []
+        for q in questions[start:start + 100]:
+            dates, crowd = q["forecast_dates"], q["crowd_probabilities"]
+            item = {
+                "id": q["event_id"], "slug": q["slug"], "title": q["title"],
+                "domain": q["domain"], "domains": q["domains"], "split": q["split"],
+                "beliefKind": q["belief_kind"], "resolvedLabel": q["resolved_label"],
+                "checkpointCount": len(dates), "firstForecastDate": dates[0] if dates else None,
+                "lastForecastDate": dates[-1] if dates else None,
+                "lastCrowdProbability": crowd[-1] if crowd else None, "chunk": chunk,
+            }
+            index.append(item)
+            details.append(item | {
+                "body": q["body"], "tags": q["tags"], "marketFlags": q["market_flags"],
+                "startDate": q["start_date"], "closeDate": q["close_date"],
+                "forecastDates": dates, "crowdProbabilities": crowd, "options": q["options"],
+            })
+        write_json(public / "questions" / chunk, details)
+    write_json(public / "questions-index.json", index)
+    return math.ceil(len(questions) / 100)
 
 
 def confidence_interval(event_values: dict[str, list[float]], seed: str, samples: int = 1000) -> dict[str, float | None]:
@@ -162,7 +199,7 @@ class Aggregate:
         pairs = {
             "accuracy": row.get("accuracy"),
             "brier": row.get("brier"),
-            "infoAlpha": row.get("info_alpha") if row.get("parse_ok") else None,
+            "infoAlpha": row.get("info_alpha"),
         }
         for metric, value in pairs.items():
             if finite(value):
@@ -281,15 +318,6 @@ def trajectory_row(
     display_name: str,
     notebook_keys: set[tuple[str, str, int, int, str]],
 ) -> dict[str, Any]:
-    forecast = None
-    raw_forecast = row.get("forecast_json")
-    if raw_forecast:
-        try:
-            parsed = json.loads(raw_forecast)
-            if isinstance(parsed, dict) and parsed:
-                forecast = {str(key): float(value) for key, value in parsed.items() if finite(value)}
-        except (TypeError, ValueError, json.JSONDecodeError):
-            forecast = None
     key = (
         str(row["run_id"]),
         str(row["event_id"]),
@@ -303,7 +331,7 @@ def trajectory_row(
         "baseModel": run["model_name"],
         "sourceType": row["source_type"],
         "sourceRelease": row["source_release"],
-        "protocol": "Historical · one repeat" if row["source_release"] == "2026-08" else "Current · four repeats",
+        "protocol": "Historical · one repeat" if row["source_release"] == "2026-08" else "Paper v1 · four repeats",
         "retrieval": row["retrieval"],
         "mode": row["mode"],
         "eventId": str(row["event_id"]),
@@ -311,13 +339,13 @@ def trajectory_row(
         "stepIndex": int(row["checkpoint_index"]),
         "forecastDate": row["forecast_date"],
         "resolvedLabel": row["resolved_label"],
-        "forecast": forecast,
+        "forecast": row["scored_distribution"],
         "brier": number_or_none(row.get("brier")),
         "accuracy": number_or_none(row.get("accuracy")),
-        "infoAlpha": number_or_none(row.get("info_alpha")) if row.get("parse_ok") else None,
+        "infoAlpha": number_or_none(row.get("info_alpha")),
         "crowdProbability": number_or_none(row.get("crowd_probability")),
-        "truthProbability": number_or_none(row.get("truth_probability")) if row.get("parse_ok") else None,
-        "parseOk": bool(row.get("parse_ok")),
+        "truthProbability": number_or_none(row.get("truth_probability")),
+        "parseOk": bool(row.get("usable")),
         "termination": row.get("termination"),
         "toolIterations": integer_or_none(row.get("tool_iterations")),
         "toolCalls": integer_or_none(row.get("tool_calls")),
@@ -334,94 +362,10 @@ def trajectory_row(
     }
 
 
-def research_summary(
-    paper: dict[str, Any],
-    summaries_by_arm_mode: dict[tuple[str, str], dict[str, Any]],
-) -> dict[str, Any]:
-    consistency = []
-    for row in paper.get("consistency", []):
-        run = summaries_by_arm_mode.get((row["arm"], row["mode"]))
-        if not run:
-            continue
-        consistency.append(
-            {
-                "runId": run["id"],
-                "modelName": run["modelName"],
-                "sourceType": run["sourceType"],
-                "mode": run["mode"],
-                "retrieval": run["retrieval"],
-                "nGroups": row["n_groups"],
-                "nUsed": row["n_used"],
-                "disagreement": row["tv_mean"],
-                "brierSingle": row["brier_single"],
-                "brierEnsemble": row["brier_ensemble"],
-                "ensembleGain": row["ensemble_gain"],
-                "accuracySingle": row["acc_single"],
-                "accuracyEnsemble": row["acc_ensemble"],
-            }
-        )
-    dynamics = []
-    for row in paper.get("dynamics", []):
-        run = summaries_by_arm_mode.get((row["arm"], "sequential"))
-        if not run:
-            continue
-        dynamics.append(
-            {
-                "runId": run["id"],
-                "modelName": run["modelName"],
-                "sourceType": run["sourceType"],
-                "retrieval": run["retrieval"],
-                "nEpisodes": row["n_episodes"],
-                "excessMovement": row["excess_movement"],
-                "interval": {"lower": row["excess_movement_lo"], "upper": row["excess_movement_hi"]},
-                "modelLeadDays": row["lead_days_all_agent"],
-                "crowdLeadDays": row["lead_days_all_crowd"],
-                "finalAccuracy": row["final_step_right"],
-            }
-        )
-    murphy = []
-    for row in paper.get("headline", []):
-        run = summaries_by_arm_mode.get((row["arm"], row["mode"]))
-        components = row.get("murphy_classwise") or {}
-        crowd_components = row.get("crowd_murphy_classwise") or {}
-        component_keys = ("REL_per_row", "RES_per_row", "UNC_per_row", "brier_1sided_per_row", "n")
-        if not run or not all(finite(components.get(key)) for key in component_keys):
-            continue
-        if not all(finite(crowd_components.get(key)) for key in component_keys):
-            continue
-        murphy.append(
-            {
-                "runId": run["id"],
-                "modelName": run["modelName"],
-                "sourceType": run["sourceType"],
-                "mode": run["mode"],
-                "retrieval": run["retrieval"],
-                "reliability": components["REL_per_row"],
-                "resolution": components["RES_per_row"],
-                "uncertainty": components["UNC_per_row"],
-                "brier": components["brier_1sided_per_row"],
-                "n": int(components["n"]),
-                "crowd": {
-                    "reliability": crowd_components["REL_per_row"],
-                    "resolution": crowd_components["RES_per_row"],
-                    "uncertainty": crowd_components["UNC_per_row"],
-                    "brier": crowd_components["brier_1sided_per_row"],
-                    "n": int(crowd_components["n"]),
-                },
-            }
-        )
-    return {"consistency": consistency, "dynamics": dynamics, "murphy": murphy}
-
-
 def build(args: argparse.Namespace) -> None:
     source = args.source.resolve()
     public = args.public_output.resolve()
     hf_output = args.hf_output.resolve()
-    paper_candidates = [
-        source / "analysis" / "metrics.json",
-        source / "analysis" / "paper_metrics" / "metrics.json",
-    ]
-    paper_path = next((path for path in paper_candidates if path.is_file()), paper_candidates[0])
     required = {
         "forecasts": source / "data" / "forecasts" / "forecasts.parquet",
         "notebooks": source / "data" / "notebooks" / "notebooks.parquet",
@@ -429,7 +373,6 @@ def build(args: argparse.Namespace) -> None:
         "questions_train": source / "data" / "questions" / "train.parquet",
         "runs": source / "data" / "runs" / "runs.parquet",
         "tools": source / "data" / "tool_usage" / "tool_usage.parquet",
-        "paper": paper_path,
         "dataset_manifest": source / "dataset_manifest.json",
     }
     missing = [str(path) for path in required.values() if not path.is_file()]
@@ -442,18 +385,17 @@ def build(args: argparse.Namespace) -> None:
     safe_clean_directory(hf_output)
     parts_root = hf_output / "_parts"
 
-    paper = read_json(required["paper"])
     dataset_manifest = read_json(required["dataset_manifest"])
-    paper_headlines = {(row["arm"], row["mode"]): row for row in paper["headline"]}
     questions = pq.read_table(required["questions_train"]).to_pylist() + pq.read_table(required["questions_eval"]).to_pylist()
     question_by_id = {str(row["event_id"]): row for row in questions}
     evaluation_ids = {event_id for event_id, row in question_by_id.items() if row["split"] == "eval"}
-    runs = [row for row in pq.read_table(required["runs"]).to_pylist() if row["retrieval"] == "baseline"]
+    runs = pq.read_table(required["runs"]).to_pylist()
     run_by_id = {str(row["run_id"]): row for row in runs}
     published_run_ids = set(run_by_id)
-    published_conditions = {(model_arm(run_id), run["mode"]) for run_id, run in run_by_id.items()}
-    paper["headline"] = [row for row in paper["headline"] if (row["arm"], row["mode"]) in published_conditions]
-    display_by_run = {run_id: model_label(run, paper_headlines) for run_id, run in run_by_id.items()}
+    display_by_run = {run_id: model_label(run) for run_id, run in run_by_id.items()}
+    snapshot = "paper-v1-" + dataset_manifest["source_archive_sha256"][:8]
+    asset_root = hf_output / "web" / snapshot
+    question_chunks = write_questions(public, questions)
 
     print("Staging full notebook records…", flush=True)
     notebook_columns = [
@@ -476,7 +418,7 @@ def build(args: argparse.Namespace) -> None:
     )
     per_run_tools = tool_totals(required["tools"])
 
-    print("Reading cumulative forecasts and computing summaries…", flush=True)
+    print("Scoring paper forecasts and computing summaries…", flush=True)
     forecast_columns = [
         "source_release", "run_id", "model_name", "source_type", "mode", "retrieval",
         "event_id", "belief_kind", "domain", "rollout_index", "checkpoint_index",
@@ -497,6 +439,7 @@ def build(args: argparse.Namespace) -> None:
     for row in forecast_rows:
         run_id = str(row["run_id"])
         event_id = str(row["event_id"])
+        score_row(row, question_by_id[event_id])
         rows_by_run[run_id].append(row)
         rows_by_event[event_id].append(row)
         overall[run_id].add(row)
@@ -524,7 +467,7 @@ def build(args: argparse.Namespace) -> None:
                 "baseModel": run["model_name"],
                 "sourceType": source_type,
                 "sourceRelease": run["source_release"],
-                "protocol": "Historical · one repeat" if run["source_release"] == "2026-08" else "Current · four repeats",
+                "protocol": "Historical · one repeat" if run["source_release"] == "2026-08" else "Paper v1 · four repeats",
                 "retrieval": run["retrieval"],
                 "mode": run["mode"],
                 "file": pathlib.Path(str(run["source_file"])).name,
@@ -534,7 +477,7 @@ def build(args: argparse.Namespace) -> None:
                 "nExpected": expected,
                 "nMissing": max(0, expected - observed),
                 "coverage": observed / expected if expected else 0,
-                "responseRate": sum(bool(row.get("parse_ok")) for row in rows) / observed if observed else 0,
+                "responseRate": sum(bool(row.get("usable")) for row in rows) / observed if observed else 0,
                 "brier": aggregate["brier"],
                 "accuracy": aggregate["accuracy"],
                 "infoAlpha": aggregate["infoAlpha"],
@@ -553,34 +496,40 @@ def build(args: argparse.Namespace) -> None:
                 "totalCacheReadTokens": sum(int(row.get("cache_read_input_tokens") or 0) for row in rows),
                 "avgModelLatencySeconds": mean(row.get("model_latency_seconds") for row in rows),
                 "notebookValidRate": mean(notebook_values),
-                "avgUsd": sum(usd_values) / observed if priced and observed else None,
-                "totalUsd": sum(usd_values) if priced else None,
+                "avgUsd": sum(usd_values) / observed if priced and observed and source_type == "closed" else None,
+                "totalUsd": sum(usd_values) if priced and source_type == "closed" else None,
             }
         )
     summaries.sort(key=lambda row: (-(row["accuracy"] or -1), row["modelName"], row["mode"]))
     summary_by_id = {row["id"]: row for row in summaries}
-    summaries_by_arm_mode = {(model_arm(row["id"]), row["mode"]): row for row in summaries}
 
     print("Writing compact GitHub Pages summaries…", flush=True)
     run_analysis = []
-    domain_names = sorted({str(row["domain"]) for row in questions})
+    domain_names = sorted({str(question_by_id[event]["domain"]) for event in evaluation_ids})
     belief_names = sorted({str(row["belief_kind"]) for row in questions})
     for summary in summaries:
         run_id = summary["id"]
         overall_result = overall[run_id].output(intervals=True, seed=run_id)
+        overall_result["coverage"] = summary["coverage"]
         domain_results = []
         for domain in domain_names:
             result = by_domain[(run_id, domain)].output()
+            expected = sum(len(question_by_id[event]["forecast_dates"]) for event in evaluation_ids if question_by_id[event]["domain"] == domain) * summary["rolloutCount"]
+            result["coverage"] = result["nRows"] / expected if expected else 0
             result.update({"key": domain, "label": domain.replace("_", " ").title()})
             domain_results.append(result)
         type_results = []
         for belief in belief_names:
             result = by_type[(run_id, belief)].output()
+            expected = sum(len(question_by_id[event]["forecast_dates"]) for event in evaluation_ids if question_by_id[event]["belief_kind"] == belief) * summary["rolloutCount"]
+            result["coverage"] = result["nRows"] / expected if expected else 0
             result.update({"key": belief, "label": belief.replace("_", " ").title()})
             type_results.append(result)
         horizon_results = []
         for key, label in HORIZON_BUCKETS:
             result = by_horizon[(run_id, key)].output()
+            expected = sum(1 for event in evaluation_ids for date in question_by_id[event]["forecast_dates"] if horizon_key(date, question_by_id[event]["close_date"]) == key) * summary["rolloutCount"]
+            result["coverage"] = result["nRows"] / expected if expected else 0
             result.update({"key": key, "label": label})
             horizon_results.append(result)
         run_analysis.append(
@@ -598,40 +547,7 @@ def build(args: argparse.Namespace) -> None:
             }
         )
 
-    legacy_analysis_path = public / "analysis-summary.json"
-    legacy_paired = []
-    if legacy_analysis_path.is_file():
-        try:
-            legacy_paired = read_json(legacy_analysis_path).get("pairedModes", [])
-        except (OSError, ValueError, json.JSONDecodeError):
-            legacy_paired = []
-    paired_modes = [row for row in legacy_paired if row.get("sequentialRunId") in summary_by_id and row.get("independentRunId") in summary_by_id]
-    for row in paper.get("memory", []):
-        independent = summaries_by_arm_mode.get((row["arm"], "independent"))
-        sequential = summaries_by_arm_mode.get((row["arm"], "sequential"))
-        if not independent or not sequential:
-            continue
-        paired_modes.append(
-            {
-                "modelName": independent["modelName"],
-                "sourceType": independent["sourceType"],
-                "sequentialRunId": sequential["id"],
-                "independentRunId": independent["id"],
-                "nMatched": row["n_pairs"],
-                "nQuestions": len(evaluation_ids),
-                "accuracyDifference": row["d_acc"],
-                "brierDifference": row["d_brier"],
-                "infoAlphaDifference": row["d_alpha"],
-                "sequentialWinRate": None,
-                "intervals": {
-                    "accuracyDifference": {"lower": row["d_acc_lo"], "upper": row["d_acc_hi"]},
-                    "brierDifference": {"lower": row["d_brier_lo"], "upper": row["d_brier_hi"]},
-                    "infoAlphaDifference": {"lower": row["d_alpha_lo"], "upper": row["d_alpha_hi"]},
-                },
-                "byDomain": [],
-                "byHorizon": [],
-            }
-        )
+    paired_modes = recompute_pairs(rows_by_run, summaries, question_by_id, confidence_interval)
 
     analysis = {
         "schemaVersion": 2,
@@ -654,24 +570,21 @@ def build(args: argparse.Namespace) -> None:
         },
         "runs": run_analysis,
         "pairedModes": paired_modes,
-        "research": research_summary(paper, summaries_by_arm_mode),
+        "research": recompute_research(rows_by_run, summaries, question_by_id, confidence_interval),
     }
 
-    weighted_crowd_count = sum(int(row.get("n_crowd") or 0) for row in paper["headline"])
-    crowd_accuracy = (
-        sum(float(row["crowd_accuracy"]) * int(row["n_crowd"]) for row in paper["headline"]) / weighted_crowd_count
-    )
-    crowd_brier = (
-        sum(float(row["crowd_brier"]) * int(row["n_crowd"]) for row in paper["headline"]) / weighted_crowd_count
-    )
+    # Full multi-option market vectors are not included in the source archive.
+    # These contextual references are the published, rounded Table 3 values,
+    # not reconstructed from the scalar resolved-outcome probabilities.
+    crowd_accuracy, crowd_brier = 0.645, 0.498
     split_counts = collections.Counter(str(row["split"]) for row in questions)
     domain_counts = collections.Counter(str(row["domain"]) for row in questions)
     belief_counts = collections.Counter(str(row["belief_kind"]) for row in questions)
     checkpoint_count = sum(len(row["forecast_dates"] or []) for row in questions)
     eval_checkpoint_count = sum(len(question_by_id[event]["forecast_dates"] or []) for event in evaluation_ids)
-    web_base = f"https://huggingface.co/datasets/{args.hf_repo}/resolve/{args.hf_revision}/web/"
+    web_base = f"https://huggingface.co/datasets/{args.hf_repo}/resolve/{args.hf_revision}/web/{snapshot}/"
     manifest = {
-        "version": "2026-09-10-cumulative",
+        "version": snapshot,
         "label": "September 2026 update",
         "generatedAt": dataset_manifest["generated_at"],
         "questionCount": len(questions),
@@ -679,7 +592,7 @@ def build(args: argparse.Namespace) -> None:
         "splitCounts": dict(sorted(split_counts.items())),
         "domainCounts": dict(sorted(domain_counts.items())),
         "beliefCounts": dict(sorted(belief_counts.items())),
-        "questionChunks": 14,
+        "questionChunks": question_chunks,
         "resultRunCount": len(summaries),
         "evaluationQuestionCount": len(evaluation_ids),
         "evaluationCheckpointCount": eval_checkpoint_count,
@@ -687,14 +600,16 @@ def build(args: argparse.Namespace) -> None:
         "forecastCount": len(forecast_rows),
         "expectedForecastCount": sum(int(row["expected_rows"]) for row in runs),
         "missingForecastCount": sum(int(row["missing_rows"]) for row in runs),
-        "scoringPolicy": "All observed forecasts; invalid answers receive recorded failure scores; missing rows are not imputed.",
+        "scoringPolicy": "Paper v1: exact labels, clipped and normalized probabilities, uniform fallback for unusable recorded forecasts, fractional ties, alpha floor 0.001; missing records excluded.",
         "crowd": {
             "name": "Market crowd",
             "brier": crowd_brier,
             "accuracy": crowd_accuracy,
             "infoAlpha": 0,
             "nRows": eval_checkpoint_count,
-            "nScored": eval_checkpoint_count,
+            "nScored": None,
+            "source": "Paper v1, Table 3 (rounded published reference)",
+            "sourceUrl": "https://arxiv.org/pdf/2609.28876v1#page=7",
         },
         "huggingFace": {
             "repository": args.hf_repo,
@@ -708,8 +623,8 @@ def build(args: argparse.Namespace) -> None:
     write_json(public / "analysis-summary.json", analysis)
 
     print("Writing per-question Hugging Face assets…", flush=True)
-    trajectories_root = hf_output / "web" / "trajectories"
-    details_root = hf_output / "web" / "details"
+    trajectories_root = asset_root / "trajectories"
+    details_root = asset_root / "details"
     for index, event_id in enumerate(sorted(evaluation_ids), start=1):
         rows = [
             trajectory_row(row, run_by_id[str(row["run_id"])], display_by_run[str(row["run_id"])], notebook_keys)
@@ -733,15 +648,38 @@ def build(args: argparse.Namespace) -> None:
         "forecastRows": len(forecast_rows),
         "notebookRows": notebook_count,
         "toolRows": tool_count,
-        "paths": {"trajectories": "web/trajectories/{event_id}.json", "details": "web/details/{event_id}.json"},
+        "snapshot": snapshot,
+        "sourceArchiveSha256": dataset_manifest["source_archive_sha256"],
+        "scoringPolicy": manifest["scoringPolicy"],
+        "paths": {"trajectories": f"web/{snapshot}/trajectories/{{event_id}}.json", "details": f"web/{snapshot}/details/{{event_id}}.json"},
     }
-    write_json(hf_output / "web" / "manifest.json", hf_manifest)
-    (hf_output / "web" / "README.md").write_text(
+    write_json(asset_root / "manifest.json", hf_manifest)
+    (asset_root / "README.md").write_text(
         "# Forecast Dojo web assets\n\n"
         "These generated files support the static Forecast Dojo website. Trajectories load when a question is opened; "
         "full notebook and tool records load only when requested. Source Parquet tables remain authoritative.\n",
         encoding="utf-8",
     )
+
+    card = (source / "README.md").read_text(encoding="utf-8")
+    card = card.replace(
+        "  is null. Aggregating Information alpha should use parsed forecasts with an\n"
+        "  available crowd reference and report its denominator separately.",
+        "  is null in the raw logs. Paper v1 scores normalize usable distributions and\n"
+        "  replace unusable recorded forecasts with uniform probabilities for all metrics,\n"
+        "  including Information alpha when the scalar market reference is available.\n"
+        "  Raw logged scores and parser diagnostics remain unchanged in the Parquet tables.",
+    )
+    card = card.replace(
+        "- Existing `web/` files belong to the previously published website snapshot.\n"
+        "  They are separate derived assets and are not part of the canonical data update.",
+        "- Browser-ready assets for this snapshot are under\n"
+        f"  `web/{snapshot}/`. Their chart and trajectory scores follow paper v1,\n"
+        "  Appendix B.3/B.4, rather than the raw log failure penalties. Older `web/`\n"
+        "  paths are retained for previous website versions. The website uses this\n"
+        "  versioned path so different releases cannot be mixed.",
+    )
+    (hf_output / "README.md").write_text(card, encoding="utf-8")
 
     local_size = sum(path.stat().st_size for path in public.glob("*.json"))
     hf_size = sum(path.stat().st_size for path in (hf_output / "web").rglob("*") if path.is_file())

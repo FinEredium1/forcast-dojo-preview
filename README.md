@@ -1,20 +1,21 @@
 # Forecast Dojo website
 
 This is a frontend-only research website. GitHub Pages serves the application,
-questions, and compact cumulative summaries. Hugging Face serves full
+questions, and compact paper-result summaries. Hugging Face serves full
 per-question forecasts, tool records, and belief notebooks on demand.
 
-There is one evolving benchmark site. Monthly updates extend the same charts
-and question library; they do not create a separate page or selector for each
-month.
+The current snapshot replaces the previous release with paper v1: 1,568 events,
+6,122 forecast dates, and 12 models in three settings (36 conditions). It includes
+114,746 recorded forecasts out of 114,768 scheduled forecasts. Historical
+releases remain in Git and Hugging Face history.
 
 ## Data layout
 
 | Location | Published content | Why |
 | --- | --- | --- |
 | `public/data/` | Manifest, run summaries, analysis summary, question index, and question chunks | Small and immediately available on GitHub Pages |
-| Hugging Face `web/trajectories/` | One model-trajectory file per evaluation question | Loaded only when a question is opened |
-| Hugging Face `web/details/` | Full published notebooks and per-tool success/error/latency rows | Loaded only after the visitor requests full process records |
+| Hugging Face `web/paper-v1-cd98a865/trajectories/` | One model-trajectory file per evaluation question | Loaded only when a question is opened |
+| Hugging Face `web/paper-v1-cd98a865/details/` | Full published notebooks and per-tool success/error/latency rows | Loaded only after the visitor requests full process records |
 | Hugging Face `data/` | Authoritative Parquet tables | Download and reproducibility |
 
 The 18.8M article CC-News corpus, retrieval indexes, search queries, raw model
@@ -55,60 +56,76 @@ under All Domain. Clicking a run pins its metrics until another run is selected
 or it is deselected. Full belief notebooks display indented, syntax-colored JSON;
 non-JSON notebook text is preserved.
 
-## Build a cumulative monthly update
+## Rebuild the paper snapshot
 
-The source dataset staging directory is `.hf_upload_staging/` at the repository
-root. It must contain the `questions`, `runs`, `forecasts`, `notebooks`, and
-`tool_usage` Parquet configurations plus `analysis/metrics.json`.
+The canonical source staging directory is `.hf_paper_upload_staging/` at the
+repository root. It contains the six Parquet tables and `dataset_manifest.json`
+prepared by `tools/prepare_hf_paper_snapshot.py` from `Forecast-Dojo_results.zip`.
+No legacy analysis files are used. Python needs PyArrow.
 
-From this `web` directory:
+From `web/`:
 
 ```powershell
-npm run data:site
+python -B scripts/build-site-data.py --hf-revision 2f660ee3b8220f41352ea1e5ba657646dfc886f3
+python -B scripts/validate-paper-data.py
 npm run build
 ```
 
-`data:site` writes:
+The exporter writes the question catalogue, dynamic question chunks, and summaries
+to `public/data/`. Large trajectories and full process records are written to
+ignored `.hf_paper_web_staging/web/paper-v1-cd98a865/`. The source ZIP hash identifies
+the asset folder, and the site manifest pins the uploaded Hugging Face commit.
+This keeps the question library and remote trajectories on the same release.
 
-- compact files to `public/data/` for GitHub Pages;
-- large browser-friendly files to ignored `.hf_web_staging/web/` for Hugging
-  Face.
+Overview and the domain, memory, and resource charts show the 24 research runs.
+Analysis also compares all three settings in a metric-selectable table. The
+question run selector includes all 36 conditions, with no-tools clearly labeled.
+Notebook formatting and the chart display defaults (34px bars, 17px model labels)
+are retained.
 
-The exporter validates required inputs, derives checkpoint indices from the
-canonical dataset, keeps all historical and current runs in one summary, and
-bootstraps metric intervals by question. It cleans only the dedicated
-`.hf_web_staging` output directory.
-
-The site publishes baseline research runs in two modes: **memory-free**, where
-each forecast step starts fresh, and **memory-on**, where the previous belief
-notebook is carried to the next forecast date. The notebook icon beside each
-Overview chart heading switches between these modes. The exporter applies the
-same published-run selection to summaries, trajectories, and process records;
-the browser also limits older remote assets to the runs in the local summary.
-
-## Upload the generated Hugging Face web assets
-
-After reviewing `.hf_web_staging/web/`, run this from the repository root:
+To upload newly generated assets after review:
 
 ```powershell
-& 'C:\Users\21980\.local\bin\hf.exe' upload 'FinEredium1/Forecast-Dojo' '.hf_web_staging' '.' --repo-type dataset --commit-message 'Update Forecast Dojo web assets'
+hf upload "FinEredium1/Forecast-Dojo" "..\.hf_paper_web_staging" "." --type dataset --revision main --commit-message "Update website assets to paper v1 results"
 ```
 
-This command is intentionally not part of the build and is never run by GitHub
-Pages. Do not add `--create-pr` unless you want a Hub pull request; a draft pull
-request must be published before it can be merged.
+After upload, pin that commit with `--hf-revision` before publishing the website.
+The uploader preserves earlier browser-asset folders for older website releases.
+GitHub Pages never uploads to Hugging Face and requires no token in the frontend.
 
 ## Scoring contract
 
-- Accuracy and Brier use all observed forecast rows. Invalid recorded answers
-  retain their recorded failure scores.
-- Missing expected rows are reported as missing and are not imputed.
-- Information alpha uses valid forecasts with an available crowd probability.
-- Coverage is observed rows divided by expected rows.
-- Confidence intervals resample whole questions so repeated dates and rollouts
-  from one question stay correlated.
-- Historical one-repeat and current four-repeat protocols remain labeled in the
-  cumulative charts.
+- Website scoring follows paper v1, Appendix B.3/B.4. Usable reports clip
+  negative entries, normalize positive finite mass, and match labels exactly.
+  Unsupported reported labels retain their probability mass.
+- Recorded unusable reports receive uniform probabilities over the offered
+  outcomes for all metrics. The raw Parquet scores and diagnostics are preserved.
+- Accuracy splits ties fractionally. Brier uses the unnormalized multiclass
+  [0, 2] scale. Information alpha uses natural logarithms with floor 0.001 and
+  includes uniform fallback when a scalar market probability is available.
+- Missing records are excluded from score means. Coverage is observed divided
+  by scheduled records, including within domain, format, and horizon slices.
+- Website intervals are exploratory 95% question-clustered percentile intervals
+  with 1,000 resamples. They are distinct from Table 3's rollout standard deviations.
+- Paired memory comparisons match event, date, and repeat. First-to-last Brier
+  improvement averages matched endpoint repeats within events, then events equally.
+- Question trajectories average recorded distributions and individual scores
+  across repeats; scores are not recomputed from the ensemble distribution.
+- Repeat reliability uses complete four-repeat groups, including uniform fallback.
+  Mean disagreement is pairwise total variation; ensemble gain compares the
+  individual mean Brier to the Brier of the averaged distribution.
+- Murphy is an exploratory pooled classwise decomposition with ten equal-width
+  bins, scaled per forecast. Tooltips report the finite-bin residual separately.
+- Full multi-option market vectors are absent from the source ZIP. Overview's
+  contextual market references are the rounded Table 3 values (Brier 0.498,
+  accuracy 64.5%), explicitly attributed in the legend tooltip. Market Murphy
+  components are unavailable and no old market point is carried forward.
+- Cost charts include only the five proprietary models with comparable provider
+  estimates, matching the paper's cost convention. Open-weight costs are NR.
+
+Validation checks all 36 model/condition means against Table 3 at published
+precision, targeted scoring edge cases, full browser-file counts, uniqueness,
+question schedules, fallback scores and summary/trajectory agreement.
 
 ## Static hosting
 

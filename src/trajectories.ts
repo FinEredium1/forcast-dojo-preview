@@ -10,7 +10,7 @@ export function averageRepeats(rows: TrajectoryRow[]): TrajectoryRow[] {
   }
   return [...dates.values()].map(group => {
     const first = group[0]
-    const answered = group.filter(r => r.parseOk && r.forecast && Object.values(r.forecast).some(v => v > 0))
+    const answered = group.filter(r => r.forecast && Object.values(r.forecast).some(v => v > 0))
     const forecast: Record<string, number> = {}
     for (const row of answered) {
       const total = Object.values(row.forecast!).filter(v => v > 0).reduce((a, b) => a + b, 0)
@@ -19,18 +19,20 @@ export function averageRepeats(rows: TrajectoryRow[]): TrajectoryRow[] {
       }
     }
     const truth = forecast[first.resolvedLabel ?? ''] ?? 0
-    const maximum = Math.max(...Object.values(forecast))
-    const ties = Object.values(forecast).filter(v => v === maximum).length
     const crowd = group.find(r => r.crowdProbability != null)?.crowdProbability ?? null
+    const mean = (values: Array<number | null>) => {
+      const available = values.filter((v): v is number => v != null)
+      return available.length ? available.reduce((a, b) => a + b, 0) / available.length : null
+    }
     return {
       runId: first.runId, modelName: first.modelName, baseModel: first.baseModel, sourceType: first.sourceType,
-      mode: first.mode, eventId: first.eventId, rolloutIndex: -1,
+      mode: first.mode, retrieval: first.retrieval, eventId: first.eventId, rolloutIndex: -1,
       stepIndex: first.stepIndex, forecastDate: first.forecastDate, resolvedLabel: first.resolvedLabel,
       forecast: answered.length ? forecast : null, truthProbability: answered.length ? truth : null,
-      brier: answered.length ? 1 - 2 * truth + Object.values(forecast).reduce((sum, p) => sum + p * p, 0) : null,
-      accuracy: answered.length ? truth === maximum ? 1 / ties : 0 : null,
-      infoAlpha: answered.length && crowd != null ? Math.log(Math.max(.001, truth) / Math.max(.001, crowd)) : null,
-      crowdProbability: crowd, parseOk: answered.length > 0, termination: null, repeatCount: answered.length,
+      brier: mean(group.map(r => r.brier)), accuracy: mean(group.map(r => r.accuracy)),
+      infoAlpha: mean(group.map(r => r.infoAlpha)),
+      crowdProbability: crowd, parseOk: group.every(r => r.parseOk), termination: null,
+      repeatCount: group.length, fallbackCount: group.filter(r => !r.parseOk).length,
     }
   }).sort((a, b) => a.stepIndex - b.stepIndex)
 }

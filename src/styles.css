@@ -1138,6 +1138,30 @@ a.question-step-link:hover, a.question-step-link:focus-visible { color: var(--ac
 .research-scatter-label-lines line { stroke: rgba(80,74,66,0.35); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .research-scatter-model-label.placed { padding: 2px 0; background: rgba(255,253,249,0.86); border-radius: 3px; }
 
+.condition-comparison { padding-block: 36px; }
+.condition-metric-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 22px 0 14px; }
+.condition-metric-controls button { padding: 9px 16px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); font: inherit; font-size: 21px; cursor: pointer; }
+.condition-metric-controls button[aria-pressed="true"] { background: #f3e5db; border-color: #c6a994; }
+.condition-metric-controls span { color: var(--muted); font-size: 19px; margin-left: 6px; }
+.condition-table-scroll { overflow-x: auto; }
+.condition-comparison table { width: 100%; border-collapse: collapse; font-size: 22px; font-variant-numeric: tabular-nums; }
+.condition-comparison caption { text-align: left; color: var(--muted); font-size: 19px; padding-bottom: 16px; }
+.condition-comparison th, .condition-comparison td { text-align: right; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.condition-comparison th:first-child { text-align: left; padding-left: 0; font-weight: 500; }
+.condition-comparison thead th { font-size: 20px; white-space: nowrap; font-weight: 600; }
+.condition-comparison thead th:nth-child(3) { color: #7451b8; }
+.condition-comparison thead th:nth-child(4), .condition-comparison .best-condition { color: #397d6c; }
+.condition-comparison .best-condition { background: rgba(76,145,122,.06); font-weight: 650; }
+.condition-comparison td small { display: block; font-size: 17px; color: var(--muted); font-weight: 400; }
+.condition-note { font-size: 19px; color: var(--muted); margin: 18px 0 0; }
+
+@media (max-width: 600px) {
+  .condition-comparison table { font-size: 18px; }
+  .condition-comparison th, .condition-comparison td { padding: 12px 10px; }
+  .condition-comparison thead th { font-size: 17px; }
+  .condition-comparison th:first-child { min-width: 132px; }
+}
+
 @media (max-width: 600px) {
   .overview-results-stack > .highlight-card { padding: 16px 12px; }
   .highlight-card-header { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 8px; }

@@ -8,6 +8,8 @@ export interface CrowdSummary {
   infoAlpha: number
   nRows: number
   nScored: number | null
+  source?: string
+  sourceUrl?: string
 }
 
 export interface Manifest {
@@ -233,7 +235,8 @@ export interface MurphySummary extends MurphyComponents {
   sourceType: SourceType
   mode: ForecastMode
   retrieval: string
-  crowd: MurphyComponents
+  crowd: MurphyComponents | null
+  binningResidual?: number
 }
 
 export interface ConsistencySummary {
@@ -257,12 +260,12 @@ export interface DynamicsSummary {
   modelName: string
   sourceType: SourceType
   retrieval: string
+  mode: ForecastMode
   nEpisodes: number
-  excessMovement: number
+  improvement: number
+  firstBrier: number
+  lastBrier: number
   interval: ConfidenceInterval
-  modelLeadDays: number
-  crowdLeadDays: number
-  finalAccuracy: number
 }
 
 export interface ToolUsageMetric {
@@ -281,6 +284,7 @@ export interface TrajectoryRow {
   protocol?: string
   usdTotal?: number | null
   repeatCount?: number
+  fallbackCount?: number
   runId: string
   modelName: string
   sourceType: SourceType
