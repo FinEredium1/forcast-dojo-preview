@@ -72,7 +72,6 @@ export interface QuestionDetail extends QuestionIndexItem {
 
 export interface RunSummary {
   baseModel?: string
-  recency?: boolean
   retrieval?: string
   sourceRelease?: string
   protocol?: string
@@ -216,7 +215,6 @@ export interface AnalysisSummary {
   research?: {
     consistency: ConsistencySummary[]
     dynamics: DynamicsSummary[]
-    recency: RecencyComparison[]
     murphy?: MurphySummary[]
   }
 }
@@ -267,21 +265,6 @@ export interface DynamicsSummary {
   finalAccuracy: number
 }
 
-export interface RecencyComparison {
-  modelName: string
-  sourceType: SourceType
-  mode: ForecastMode
-  nMatched: number
-  brierDifference: number
-  accuracyDifference: number
-  infoAlphaDifference: number
-  intervals: {
-    brierDifference: ConfidenceInterval
-    accuracyDifference: ConfidenceInterval
-    infoAlphaDifference: ConfidenceInterval
-  }
-}
-
 export interface ToolUsageMetric {
   known: boolean | null
   calls: number
@@ -293,7 +276,6 @@ export interface ToolUsageMetric {
 
 export interface TrajectoryRow {
   baseModel?: string
-  recency?: boolean
   retrieval?: string
   sourceRelease?: string
   protocol?: string

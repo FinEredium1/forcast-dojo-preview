@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import alibabaLogo from '@lobehub/icons-static-svg/icons/alibaba-color.svg'
 import anthropicLogo from '@lobehub/icons-static-svg/icons/anthropic.svg'
 import deepSeekLogo from '@lobehub/icons-static-svg/icons/deepseek-color.svg'
@@ -9,7 +10,7 @@ import openAiLogo from '@lobehub/icons-static-svg/icons/openai.svg'
 import xAiLogo from '@lobehub/icons-static-svg/icons/xai.svg'
 import zaiLogo from '@lobehub/icons-static-svg/icons/zai.svg'
 import { attachQuestionProcess, loadAnalysis, loadManifest, loadQuestion, loadQuestionIndex, loadQuestionProcess, loadRunSummaries, loadTrajectories } from './data'
-import type { AnalysisSummary, BreakdownAggregate, ConsistencySummary, DynamicsSummary, ForecastMode, Manifest, MurphySummary, PairedModeComparison, QuestionDetail, QuestionIndexItem, RecencyComparison, RunAnalysis, RunSummary, SourceType, TrajectoryRow } from './types'
+import type { AnalysisSummary, BreakdownAggregate, ConsistencySummary, DynamicsSummary, ForecastMode, Manifest, MurphySummary, PairedModeComparison, QuestionDetail, QuestionIndexItem, RunAnalysis, RunSummary, SourceType, TrajectoryRow } from './types'
 
 import { averageRepeats } from './trajectories'
 
@@ -149,9 +150,7 @@ function Footer({ manifest }: { manifest: Manifest | null }) {
 }
 
 function OverviewPage({ manifest, runs, analysis }: { manifest: Manifest; runs: RunSummary[]; analysis: AnalysisSummary | null }) {
-  const bestRun = bestByMetric(runs, 'accuracy')
-  const bestAccuracy = bestRun?.accuracy ?? null
-  const crowdGap = bestAccuracy == null ? null : (manifest.crowd.accuracy ?? 0) - bestAccuracy
+  const bestRun = bestByMetric(runs, 'brier')
   const murphy = analysis?.research?.murphy ?? []
   const hasCost = runs.some((run) => isFiniteNumber(run.avgUsd) && run.avgUsd > 0 && isFiniteNumber(run.infoAlpha))
 
@@ -160,67 +159,68 @@ function OverviewPage({ manifest, runs, analysis }: { manifest: Manifest; runs: 
       <section className="hero overview-hero section-rule">
         <div className="overview-hero-intro">
           <h1>Forecast Dojo</h1>
-          <p className="overview-question">Can LLM reasoning outperform human collective judgment in forecasting?</p>
+          <p className="overview-question">Replayable environments to benchmark and train LLM forecasting agents.</p>
+          <div className="overview-actions">
+            <a className="button button-primary" href={PAPER_URL} target="_blank" rel="noopener noreferrer">Read the paper <span aria-hidden="true">↗</span></a>
+            <a href={releaseHref('#/results')}>Explore results <span aria-hidden="true">↗</span></a>
+          </div>
         </div>
         <aside className="hero-readout" aria-label="Current benchmark readout">
           <span>{manifest.label}</span>
-          <strong>{crowdGap == null ? 'Analysis in progress' : crowdGap > 0 ? `Crowd leads by ${percentagePoints(crowdGap)}` : `Best model leads by ${percentagePoints(Math.abs(crowdGap))}`}</strong>
-          <p>{bestRun ? `${bestRun.modelName} · ${modeLabel(bestRun.mode)} is the highest-accuracy published model run at ${percent(bestAccuracy)}.` : 'No scored model runs are published yet.'}</p>
-          <a href={releaseHref('#/results')}>See the analysis <span aria-hidden="true">↗</span></a>
+          <strong>Brier score <span aria-label="Lower is better">↓</span></strong>
+          <dl className="hero-score-comparison">
+            <div><dt>Historical market belief</dt><dd>{formatMetric(manifest.crowd.brier, 'brier')}</dd></div>
+            <div><dt>Best observed model<small>{bestRun ? `${bestRun.modelName} · ${modeLabel(bestRun.mode)}` : 'Awaiting scored runs'}</small></dt><dd>{formatMetric(bestRun?.brier, 'brier')}</dd></div>
+          </dl>
         </aside>
       </section>
 
       <section className="highlight-section overview-results-stack section-rule" aria-label="Benchmark results">
-        <ChartCard title="Accuracy" description="Forecasts assigning the highest probability to the resolved outcome." accent="quality" className="accuracy-card">
-          <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.accuracy} metric="accuracy" />
-        </ChartCard>
-        <ChartCard title="Brier score" description="Mean squared probability error across resolved outcomes." accent="activity" className="accuracy-card">
-          <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.brier} metric="brier" />
-        </ChartCard>
-        <ChartCard title="Information alpha" description="Forecasting information gained relative to the market crowd." accent="tokens" className="accuracy-card">
-          <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.infoAlpha} metric="infoAlpha" />
-        </ChartCard>
-        {murphy.length ? <ChartCard title="Murphy decomposition" description="Calibration error versus forecast resolution. Upper-left is better; shared uncertainty is shown in the details." accent="quality" className="accuracy-card research-scatter-card">
-          <ResearchScatterChart runs={runs} murphy={murphy} kind="murphy" />
-        </ChartCard> : null}
-        {hasCost ? <ChartCard title="Information alpha vs. cost" description="Crowd-relative forecasting information against recorded cost per checkpoint. Upper-left is better." accent="activity" className="accuracy-card research-scatter-card">
-          <ResearchScatterChart runs={runs} murphy={murphy} kind="cost" />
-        </ChartCard> : null}
+        <MemoryChartCard title="Brier score" formula="brier" accent="activity" className="accuracy-card">
+          {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.brier} metric="brier" memoryEnabled={memoryEnabled} />}
+        </MemoryChartCard>
+        <MemoryChartCard title="Accuracy" formula="accuracy" accent="quality" className="accuracy-card">
+          {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.accuracy} metric="accuracy" memoryEnabled={memoryEnabled} />}
+        </MemoryChartCard>
       </section>
 
-      <section className="stat-grid section-rule" aria-label="Benchmark scope">
-        <Stat value={number(manifest.questionCount)} label="forecasting questions" />
-        <Stat value={number(manifest.checkpointCount)} label="dated checkpoints" />
-        <Stat value={number(manifest.resultRunCount)} label="model runs published" />
-        <Stat value="Monthly" label="versioned releases" />
-        <Stat value="20M+" label="news articles in corpus" />
+      <PaperOverviewFigure />
+
+      <section className="highlight-section overview-results-stack overview-supporting-results section-rule" aria-label="Further benchmark analysis">
+        <MemoryChartCard title="Information alpha" formula="infoAlpha" accent="tokens" className="accuracy-card">
+          {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.infoAlpha} metric="infoAlpha" memoryEnabled={memoryEnabled} />}
+        </MemoryChartCard>
+        {murphy.length ? <MemoryChartCard title="Murphy decomposition" formula="murphy" accent="quality" className="accuracy-card research-scatter-card">
+          {(memoryEnabled) => <ResearchScatterChart runs={runs} murphy={murphy} kind="murphy" memoryEnabled={memoryEnabled} />}
+        </MemoryChartCard> : null}
+        {hasCost ? <MemoryChartCard title="Information alpha vs. cost" accent="activity" className="accuracy-card research-scatter-card">
+          {(memoryEnabled) => <ResearchScatterChart runs={runs} murphy={murphy} kind="cost" memoryEnabled={memoryEnabled} />}
+        </MemoryChartCard> : null}
       </section>
 
-      <section className="study-grid section-rule">
-        <div className="section-heading"><p className="eyebrow">Study design</p><h2>One question, several moments, one fair information boundary</h2></div>
-        <ol className="method-steps">
-          <li><span>01</span><div><strong>Select a dated question</strong><p>Each question is observed at several checkpoints before resolution.</p></div></li>
-          <li><span>02</span><div><strong>Retrieve news available then</strong><p>The model can access the CC-News collection only up to that checkpoint.</p></div></li>
-          <li><span>03</span><div><strong>Record both probabilities</strong><p>The model forecast and contemporaneous crowd probability are compared after resolution.</p></div></li>
-        </ol>
-      </section>
-
-      <section className="mode-note section-rule" id="memory">
-        <div><p className="eyebrow">Secondary analysis</p><h2>Does forecast memory help?</h2></div>
-        <div className="mode-columns">
-          <article><h3>Independent</h3><p>At each checkpoint, the model begins fresh and cannot see its work from the previous checkpoint.</p></article>
-          <article><h3>Sequential</h3><p>At each checkpoint, the model receives its compact belief notebook from the previous checkpoint.</p></article>
-        </div>
-      </section>
-
-      <section className="mode-note section-rule" id="evaluation-notes">
-        <div><p className="eyebrow">Evaluation integrity</p><h2>Read uncertainty and coverage together</h2></div>
-        <div className="mode-columns">
-          <article><h3>Question-clustered intervals</h3><p>Confidence intervals resample whole questions, because checkpoints from the same question share an outcome and information history.</p></article>
-          <article><h3>Visible coverage</h3><p>Partial runs remain visible with their observed coverage. Missing forecasts stay missing rather than being imputed.</p></article>
-        </div>
-      </section>
     </>
+  )
+}
+
+function PaperOverviewFigure() {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const figureUrl = `${import.meta.env.BASE_URL}figures/forecast-dojo-figure-1.webp`
+  const description = 'Figure 1 from the paper: curate historical events and dated news, forecast each question over time, research with date-limited tools and optional belief notebooks, then score hidden outcomes for evaluation and training.'
+
+  return (
+    <figure className="paper-overview-figure section-rule" id="environment">
+      <button className="paper-figure-preview" type="button" onClick={() => dialogRef.current?.showModal()} aria-label="Enlarge Figure 1">
+        <img src={figureUrl} width="2800" height="1989" alt={description} loading="lazy" />
+      </button>
+      <figcaption>
+        <a href={`${PAPER_URL}#page=3`} target="_blank" rel="noopener noreferrer">Figure 1 · Paper overview <span aria-hidden="true">↗</span></a>
+        <button type="button" onClick={() => dialogRef.current?.showModal()}>Enlarge <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6" /></svg></button>
+      </figcaption>
+      <dialog className="paper-figure-dialog" ref={dialogRef} aria-label="Figure 1: Overview of Forecast Dojo" onClick={(event) => { if (event.target === event.currentTarget) dialogRef.current?.close() }}>
+        <div className="paper-figure-dialog-header"><span>Forecast Dojo environment</span><button type="button" aria-label="Close figure" onClick={() => dialogRef.current?.close()}>Close <span aria-hidden="true">×</span></button></div>
+        <div className="paper-figure-enlarged"><img src={figureUrl} width="2800" height="1989" alt={description} /></div>
+      </dialog>
+    </figure>
   )
 }
 
@@ -234,13 +234,12 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
   const pairedModeRunIds = pairedModes.flatMap((row) => [row.independentRunId, row.sequentialRunId])
   const consistencyRunIds = analysis?.research?.consistency.map((row) => row.runId) ?? []
   const dynamicsRunIds = analysis?.research?.dynamics.map((row) => row.runId) ?? []
-  const recencyRunIds = recencyComparisonRunIds(runs, analysis?.research?.recency ?? [])
 
   return (
     <>
       <PageIntro eyebrow="Benchmark analysis" title="Forecasting quality, memory, and research effort" copy="Compare each published model run with the contemporaneous market crowd across forecasting quality, resolution horizon, domain, and available research telemetry." />
 
-      {analysis ? <ModelFilteredAnalysisSection chartId="results-domain" eyebrow="Domain breakdown" title="Which model performs best in each domain?" description="Choose a domain to rank published runs by crowd-relative information alpha. Higher values indicate more forecasting information than the contemporaneous market." note="Leaders are the highest observed values, not claims of statistical significance. Question and checkpoint counts remain visible for context." runs={runs} eligibleRunIds={analysisRunIds} modeControl="compare" recencyControl="compare" defaultModelCount={8}>
+      {analysis ? <ModelFilteredAnalysisSection chartId="results-domain" eyebrow="Domain breakdown" title="Which model performs best in each domain?" description="Choose a domain to rank published runs by crowd-relative information alpha. Higher values indicate more forecasting information than the contemporaneous market." note="Leaders are the highest observed values, not claims of statistical significance. Question and checkpoint counts remain visible for context." runs={runs} eligibleRunIds={analysisRunIds} modeControl="compare" defaultModelCount={8}>
         {({ visibleRunIds }) => <DomainLeaderboardChart analysisRuns={analysis.runs} runSummaries={runs} visibleRunIds={visibleRunIds} domains={analysis.domains} />}
       </ModelFilteredAnalysisSection> : null}
 
@@ -252,12 +251,8 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
         {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.questionTypes.map((key) => ({ key, label: humanize(key) }))} field="byQuestionType" metric="accuracy" />}
       </ModelFilteredAnalysisSection> : null}
 
-      {pairedModes.length ? <ModelFilteredAnalysisSection chartId="results-memory" eyebrow="Forecast memory" title="Does sequential memory help?" description="Sequential and independent runs are matched at the same question and forecast date before their differences are calculated." note="Differences are Sequential minus Independent; negative Brier differences are favorable." runs={runs} eligibleRunIds={pairedModeRunIds} modeControl="compare">
+      {pairedModes.length ? <ModelFilteredAnalysisSection chartId="results-memory" eyebrow="Forecast memory" title="Does a belief notebook help?" description="Memory-on and memory-free runs are matched at the same question and forecast date before their differences are calculated." note="Differences are Memory-on minus Memory-free; negative Brier differences are favorable." runs={runs} eligibleRunIds={pairedModeRunIds} modeControl="compare">
         {({ visibleGroupIds }) => <PairedModeChart comparisons={pairedModes} visibleGroupIds={visibleGroupIds} />}
-      </ModelFilteredAnalysisSection> : null}
-
-      {analysis?.research?.recency.length ? <ModelFilteredAnalysisSection chartId="results-recency" eyebrow="Retrieval strategy" title="Does recency weighting help?" description="Recency-weighted retrieval is compared with baseline retrieval for the same model, forecasting mode, and question-date." note="Differences are Recency minus Baseline; negative Brier differences are favorable." runs={runs} eligibleRunIds={recencyRunIds} recencyControl="compare">
-        {({ visibleGroupIds, activeMode }) => <RecencyEffectChart comparisons={analysis.research!.recency} runs={runs} visibleGroupIds={visibleGroupIds} activeMode={activeMode} />}
       </ModelFilteredAnalysisSection> : null}
 
       {analysis?.research?.consistency.length ? <ModelFilteredAnalysisSection chartId="results-consistency" eyebrow="Repeat reliability" title="Do repeated forecasts agree?" description="Four repeated forecasts expose run-to-run disagreement and show whether averaging the distributions improves Brier score." note="Brier improvement is Single-repeat Brier minus Averaged-forecast Brier; larger positive values favor averaging." runs={runs} eligibleRunIds={consistencyRunIds}>
@@ -268,7 +263,7 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
         {({ visibleRunIds }) => <ToolMixChart runs={runs} visibleRunIds={visibleRunIds} />}
       </ModelFilteredAnalysisSection> : null}
 
-      {hasInputTokens ? <ModelFilteredAnalysisSection chartId="results-input-tokens" eyebrow="Context consumption" title="Input tokens per checkpoint" description="Average number of input tokens processed across all model calls used to produce one forecast." note="Includes repeated context and, for sequential runs, carried notebook context" runs={runs} eligibleRunIds={runIdsWithMetric(runs, 'avgInputTokens')}>
+      {hasInputTokens ? <ModelFilteredAnalysisSection chartId="results-input-tokens" eyebrow="Context consumption" title="Input tokens per checkpoint" description="Average number of input tokens processed across all model calls used to produce one forecast." note="Includes repeated context and, for memory-on runs, carried belief-notebook context" runs={runs} eligibleRunIds={runIdsWithMetric(runs, 'avgInputTokens')}>
         {({ visibleRunIds }) => <GroupedRunChart runs={runs} visibleRunIds={visibleRunIds} metric="avgInputTokens" format="compact" minValue={0} />}
       </ModelFilteredAnalysisSection> : null}
 
@@ -280,9 +275,17 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
         {({ visibleRunIds }) => <GroupedRunChart runs={runs} visibleRunIds={visibleRunIds} metric="avgModelLatencySeconds" format="duration" minValue={0} />}
       </ModelFilteredAnalysisSection> : null}
 
-      {analysis?.research?.dynamics.length ? <ModelFilteredAnalysisSection chartId="results-dynamics" eyebrow="Forecast evolution" title="How sequential beliefs move through time" description="Excess movement and lead time summarize how sequential forecasts update as resolution approaches." note="Excess movement describes updating conditional on the eventual outcome; its sign alone is not a test of rationality." runs={runs} eligibleRunIds={dynamicsRunIds} modeControl="sequential-only">
+      {analysis?.research?.dynamics.length ? <ModelFilteredAnalysisSection chartId="results-dynamics" eyebrow="Forecast evolution" title="How memory-on forecasts evolve over time" description="Excess movement and lead time summarize how memory-on forecasts update as resolution approaches." note="Excess movement describes updating conditional on the eventual outcome; its sign alone is not a test of rationality." runs={runs} eligibleRunIds={dynamicsRunIds} modeControl="memory-on-only">
         {({ visibleRunIds }) => <DynamicsChart rows={analysis.research!.dynamics} visibleRunIds={visibleRunIds} />}
       </ModelFilteredAnalysisSection> : null}
+
+      <section className="mode-note section-rule" id="evaluation-notes">
+        <div><p className="eyebrow">Evaluation integrity</p><h2>Read uncertainty and coverage together</h2></div>
+        <div className="mode-columns">
+          <article><h3>Question-clustered intervals</h3><p>Confidence intervals resample whole questions, because checkpoints from the same question share an outcome and information history.</p></article>
+          <article><h3>Visible coverage</h3><p>Partial runs remain visible with their observed coverage. Missing forecasts stay missing rather than being imputed.</p></article>
+        </div>
+      </section>
 
     </>
   )
@@ -493,10 +496,6 @@ function PaperRedirect() {
   return <LoadingPage label="Opening the paper…" />
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
-  return <article><span className="stat-value">{value}</span><span className="stat-label">{label}</span></article>
-}
-
 function BreakdownMatrix({ runs, keys, field, metric, visibleRunIds }: { runs: RunAnalysis[]; keys: Array<{ key: string; label: string }>; field: 'byDomain' | 'byHorizon' | 'byQuestionType'; metric: Metric; visibleRunIds?: string[] }) {
   const runOrder = visibleRunIds ? new Map(visibleRunIds.map((id, index) => [id, index])) : null
   const orderedRuns = [...runs]
@@ -524,7 +523,7 @@ function BreakdownMatrix({ runs, keys, field, metric, visibleRunIds }: { runs: R
           </article>
         )
       })}
-      <figcaption>Color intensity is normalized within this visualization; rely on the printed values for comparisons. <a href={releaseHref('#/overview#evaluation-notes')}>Coverage and uncertainty</a></figcaption>
+      <figcaption>Color intensity is normalized within this visualization; rely on the printed values for comparisons. <a href={releaseHref('#/results#evaluation-notes')}>Coverage and uncertainty</a></figcaption>
     </figure>
   )
 }
@@ -627,38 +626,11 @@ function PairedModeChart({ comparisons, visibleGroupIds }: { comparisons: Paired
             <DifferenceCell label="Accuracy Δ" value={comparison.accuracyDifference} format="points" favorable={(comparison.accuracyDifference ?? 0) > 0} interval={comparison.intervals.accuracyDifference} />
             <DifferenceCell label="Brier Δ" value={comparison.brierDifference} format="decimal" favorable={(comparison.brierDifference ?? 0) < 0} interval={comparison.intervals.brierDifference} />
             <DifferenceCell label="Information α Δ" value={comparison.infoAlphaDifference} format="decimal" favorable={(comparison.infoAlphaDifference ?? 0) > 0} interval={comparison.intervals.infoAlphaDifference} />
-            <DifferenceCell label="Sequential lower Brier" value={comparison.sequentialWinRate} format="percent" favorable={(comparison.sequentialWinRate ?? 0) > 0.5} />
+            <DifferenceCell label="Memory-on lower Brier" value={comparison.sequentialWinRate} format="percent" favorable={(comparison.sequentialWinRate ?? 0) > 0.5} />
           </div>
         </article>
       ))}
-      <figcaption>Paired intervals are clustered by question. These differences measure the effect of forecast memory within each model family. <a href={releaseHref('#/overview#memory')}>Protocol details</a></figcaption>
-    </figure>
-  )
-}
-
-function RecencyEffectChart({ comparisons, runs, visibleGroupIds, activeMode }: { comparisons: RecencyComparison[]; runs: RunSummary[]; visibleGroupIds?: string[]; activeMode: Exclude<ForecastMode, 'unknown'> }) {
-  const selectedNameOrder = visibleGroupIds ? new Map(visibleGroupIds.flatMap((id, index) => {
-    const group = groupRuns(runs).find((candidate) => candidate.id === id)
-    return group ? [[comparisonModelKey(group.modelName), index] as const] : []
-  })) : null
-  const modeOrder: Record<ForecastMode, number> = { independent: 0, sequential: 1, unknown: 2 }
-  const ordered = [...comparisons]
-    .filter((row) => row.mode === activeMode && (!selectedNameOrder || selectedNameOrder.has(comparisonModelKey(row.modelName))))
-    .sort((a, b) => selectedNameOrder
-      ? (selectedNameOrder.get(comparisonModelKey(a.modelName)) ?? Number.MAX_SAFE_INTEGER) - (selectedNameOrder.get(comparisonModelKey(b.modelName)) ?? Number.MAX_SAFE_INTEGER) || modeOrder[a.mode] - modeOrder[b.mode]
-      : a.brierDifference - b.brierDifference)
-  const scale = Math.max(0.001, ...comparisons.map((row) => Math.abs(row.brierDifference)))
-  return (
-    <figure className="research-list-chart">
-      {ordered.map((row) => {
-        const tooltip = `${row.modelName} · ${modeLabel(row.mode)} · Brier difference ${signedDecimal(row.brierDifference)} · ${number(row.nMatched)} matched question-dates`
-        return <article className="research-chart-row" key={`${row.modelName}:${row.mode}`} role="img" aria-label={tooltip} tabIndex={0}>
-          <div className="research-chart-identity"><strong>{shortModelName(row.modelName)}</strong><span>{modeLabel(row.mode)} · {sourceLabel(row.sourceType)}</span></div>
-          <EffectBar value={row.brierDifference} scale={scale} favorable={row.brierDifference < 0} />
-          <div className="research-chart-values"><strong>{signedDecimal(row.brierDifference)} Brier</strong><span>{signedPoints(row.accuracyDifference)} accuracy · {signedDecimal(row.infoAlphaDifference)} α</span></div>
-        </article>
-      })}
-      <figcaption>Hover or focus a row for emphasis. Intervals and exact matched counts are retained in the downloadable analysis summary.</figcaption>
+      <figcaption>Paired intervals are clustered by question. These differences measure the effect of forecast memory within each model family. <a href={releaseHref('#/overview#environment')}>Protocol overview</a></figcaption>
     </figure>
   )
 }
@@ -699,7 +671,7 @@ function DynamicsChart({ rows, visibleRunIds }: { rows: DynamicsSummary[]; visib
       {ordered.map((row) => {
         const tooltip = `${row.modelName} · excess movement ${row.excessMovement.toFixed(3)} · model lead ${row.modelLeadDays.toFixed(1)} days · crowd lead ${row.crowdLeadDays.toFixed(1)} days`
         return <article className="research-chart-row" key={row.runId} role="img" aria-label={tooltip} tabIndex={0}>
-          <div className="research-chart-identity"><strong>{shortModelName(row.modelName)}</strong><span>Sequential · {retrievalLabel(row.retrieval)}</span></div>
+          <div className="research-chart-identity"><strong>{shortModelName(row.modelName)}</strong><span>Memory-on · {retrievalLabel(row.retrieval)}</span></div>
           <EffectBar value={row.excessMovement} scale={scale} favorable={row.excessMovement <= 0} />
           <div className="research-chart-values"><strong>{signedDecimal(row.excessMovement)} movement</strong><span>{row.modelLeadDays.toFixed(1)}d model lead · {row.crowdLeadDays.toFixed(1)}d crowd</span></div>
         </article>
@@ -720,8 +692,54 @@ function DifferenceCell({ label, value, format, favorable, interval }: { label: 
   return <div className={`difference-cell${favorable ? ' favorable' : ''}`} role="img" tabIndex={0} aria-label={`${label} ${formatted}${interval ? `, 95% confidence interval ${format === 'points' ? `${signedPoints(interval.lower)} to ${signedPoints(interval.upper)}` : `${signedDecimal(interval.lower)} to ${signedDecimal(interval.upper)}`}` : ''}`}><span>{label}</span><strong>{formatted}</strong>{interval ? <small>95% CI {format === 'points' ? `${signedPoints(interval.lower)} to ${signedPoints(interval.upper)}` : `${signedDecimal(interval.lower)} to ${signedDecimal(interval.upper)}`}</small> : null}</div>
 }
 
-function ChartCard({ title, description, accent, className = '', children }: { title: string; description: string; accent: 'quality' | 'activity' | 'tokens'; className?: string; children: React.ReactNode }) {
-  return <article className={`highlight-card ${accent} ${className}`.trim()}><div className="highlight-card-heading"><span aria-hidden="true" /><h3>{title}</h3></div><p>{description}</p>{children}</article>
+type MetricFormulaKind = Metric | 'murphy'
+
+type BarTooltip = { runId: string; condition: string; value: string; coverage: string; x: number; y: number; above: boolean }
+
+const metricFormulas: Record<MetricFormulaKind, { label: string; math: string }> = {
+  accuracy: {
+    label: 'Accuracy: mean credit for the resolved outcome among top-probability outcomes. T is the set of most probable outcomes; ties split credit.',
+    math: '<mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mi>i</mi></munder><mfrac><mrow><mn>𝟙</mn><mo>[</mo><msub><mi>y</mi><mi>i</mi></msub><mo>∈</mo><msub><mi>T</mi><mi>i</mi></msub><mo>]</mo></mrow><mrow><mo>|</mo><msub><mi>T</mi><mi>i</mi></msub><mo>|</mo></mrow></mfrac>',
+  },
+  brier: {
+    label: 'Brier score: mean sum of squared differences between forecast probabilities and the resolved outcome.',
+    math: '<mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mi>i</mi></munder><munder><mo>∑</mo><mi>k</mi></munder><msup><mrow><mo>(</mo><msub><mi>p</mi><mrow><mi>i</mi><mi>k</mi></mrow></msub><mo>−</mo><mn>𝟙</mn><mo>[</mo><msub><mi>y</mi><mi>i</mi></msub><mo>=</mo><mi>k</mi><mo>]</mo><mo>)</mo></mrow><mn>2</mn></msup>',
+  },
+  infoAlpha: {
+    label: 'Information alpha: mean log ratio of agent to market probability for the resolved outcome. Epsilon is the probability floor, 0.001.',
+    math: '<mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mi>i</mi></munder><mi mathvariant="normal">log</mi><mfrac><mrow><mi mathvariant="normal">max</mi><mo>(</mo><msub><mi>p</mi><mi>i</mi></msub><mo>(</mo><msub><mi>y</mi><mi>i</mi></msub><mo>)</mo><mo>,</mo><mi>ε</mi><mo>)</mo></mrow><mrow><mi mathvariant="normal">max</mi><mo>(</mo><msub><mi>m</mi><mi>i</mi></msub><mo>(</mo><msub><mi>y</mi><mi>i</mi></msub><mo>)</mo><mo>,</mo><mi>ε</mi><mo>)</mo></mrow></mfrac>',
+  },
+  murphy: {
+    label: 'Brier score equals reliability minus resolution plus uncertainty.',
+    math: '<mi mathvariant="normal">REL</mi><mo>−</mo><mi mathvariant="normal">RES</mi><mo>+</mo><mi mathvariant="normal">UNC</mi>',
+  },
+}
+
+function MetricFormula({ kind }: { kind: MetricFormulaKind }) {
+  const { label, math } = metricFormulas[kind]
+  return <div className="metric-formula" role="img" aria-label={label} title={label}><span aria-hidden="true" dangerouslySetInnerHTML={{ __html: `<math xmlns="http://www.w3.org/1998/Math/MathML"><mrow>${math}</mrow></math>` }} /></div>
+}
+
+function MemoryChartCard({ title, formula, accent, className = '', children }: { title: string; formula?: MetricFormulaKind; accent: 'quality' | 'activity' | 'tokens'; className?: string; children: (memoryEnabled: boolean) => React.ReactNode }) {
+  const [memoryEnabled, setMemoryEnabled] = useState(false)
+  const mode = memoryEnabled ? 'Memory-on' : 'Memory-free'
+  return (
+    <article className={`highlight-card ${accent} ${className}`.trim()}>
+      <div className="highlight-card-header">
+        <div className="highlight-card-copy"><div className="highlight-card-heading"><span aria-hidden="true" /><h3>{title}</h3></div>{formula ? <MetricFormula kind={formula} /> : null}</div>
+        <button type="button" className={`memory-icon-control${memoryEnabled ? ' active' : ''}`} aria-label={`Belief notebook memory for ${title}`} aria-pressed={memoryEnabled} title={`${mode}. ${memoryEnabled ? 'Show memory-free forecasts' : 'Show memory-on forecasts with a carried belief notebook'}.`} onClick={() => setMemoryEnabled((enabled) => !enabled)}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="#b49bdf" stroke="#7052b8" d="M12 5.5C12 2.5 8 1.6 6.6 4.2C4 4.2 2.5 6.3 3.2 8.7C1.8 10.7 2.8 13.5 4.8 14.1C4 16.6 5.8 19 8 18.8C9.3 21.1 12 20.4 12 18.1Z" />
+            <path fill="#82c9b8" stroke="#398774" d="M12 5.5C12 2.5 16 1.6 17.4 4.2C20 4.2 21.5 6.3 20.8 8.7C22.2 10.7 21.2 13.5 19.2 14.1C20 16.6 18.2 19 16 18.8C14.7 21.1 12 20.4 12 18.1Z" />
+            <path stroke="#7052b8" d="M6.6 4.2C6.3 6.1 7.2 7.4 8.6 7.7M3.2 8.7C5.4 8.4 6.6 9.7 6.4 11.3M4.8 14.1C6.8 14.5 8.1 13.5 8.4 12M8 18.8C7.8 16.7 8.8 15.7 10.2 15.5" />
+            <path stroke="#398774" d="M17.4 4.2C17.7 6.1 16.8 7.4 15.4 7.7M20.8 8.7C18.6 8.4 17.4 9.7 17.6 11.3M19.2 14.1C17.2 14.5 15.9 13.5 15.6 12M16 18.8C16.2 16.7 15.2 15.7 13.8 15.5" />
+          </svg>
+          <span className="sr-only">{mode}</span>
+        </button>
+      </div>
+      {children(memoryEnabled)}
+    </article>
+  )
 }
 
 function AnalysisSection({ eyebrow, title, description, note, children }: { eyebrow: string; title: string; description: string; note: string; children: React.ReactNode }) {
@@ -750,12 +768,10 @@ type ModelProvider = (typeof modelProviders)[number]
 type RunGroup = { id: string; modelName: string; sourceType: SourceType; runs: RunSummary[] }
 type AccuracySourceFilter = 'all' | 'open' | 'closed'
 type AccuracyReleaseFilter = 'all' | 'current' | 'historical'
-type AnalysisModeControl = 'select' | 'compare' | 'sequential-only'
-type AnalysisRecencyControl = 'select' | 'compare'
+type AnalysisModeControl = 'select' | 'compare' | 'memory-on-only'
 type AnalysisFigureSelection = { visibleGroupIds: string[]; visibleRunIds: string[]; activeMode: Exclude<ForecastMode, 'unknown'> }
-type AnalysisRunFamily = { representative: RunGroup; baseline?: RunGroup; recency?: RunGroup }
 
-function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, note, runs, eligibleRunIds, modeControl = 'select', recencyControl = 'select', defaultModelCount, children }: {
+function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, note, runs, eligibleRunIds, modeControl = 'select', defaultModelCount, children }: {
   chartId: string
   eyebrow: string
   title: string
@@ -764,7 +780,6 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
   runs: RunSummary[]
   eligibleRunIds: string[]
   modeControl?: AnalysisModeControl
-  recencyControl?: AnalysisRecencyControl
   defaultModelCount?: number
   children: (selection: AnalysisFigureSelection) => React.ReactNode
 }) {
@@ -772,22 +787,7 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
   const eligibleGroups = groupRuns(runs)
     .map((group) => ({ ...group, runs: group.runs.filter((run) => eligible.has(run.id)) }))
     .filter((group) => group.runs.length)
-  const familyMap = new Map<string, AnalysisRunFamily>()
-  for (const group of eligibleGroups) {
-    const key = retrievalFamilyKey(group)
-    const current = familyMap.get(key)
-    if (!current) {
-      familyMap.set(key, { representative: group, ...(isRecencyGroup(group) ? { recency: group } : { baseline: group }) })
-    } else if (isRecencyGroup(group)) {
-      current.recency = group
-    } else {
-      current.baseline = group
-      current.representative = group
-    }
-  }
-  const families = [...familyMap.values()]
-  const groups = families.map((family) => family.representative)
-  const familyByRepresentativeId = new Map(families.map((family) => [family.representative.id, family]))
+  const groups = eligibleGroups
   const defaults = defaultResultGroupIds(groups).slice(0, defaultModelCount ?? groups.length)
   const [selectedIds, setSelectedIds] = useState<string[]>(() => defaults)
   const [modelSearch, setModelSearch] = useState('')
@@ -796,33 +796,25 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
   const [providerFilter, setProviderFilter] = useState('all')
   const groupMap = new Map(groups.map((group) => [group.id, group]))
   const selected = selectedIds.map((id) => groupMap.get(id)).filter((group): group is RunGroup => Boolean(group))
-  const activeMode: Exclude<ForecastMode, 'unknown'> = modeControl === 'sequential-only' ? 'sequential' : 'independent'
+  const activeMode: Exclude<ForecastMode, 'unknown'> = modeControl === 'memory-on-only' ? 'sequential' : 'independent'
   const searchTerm = modelSearch.trim().toLowerCase()
   const searchResults = groups.filter((group) => {
     const haystack = `${group.modelName} ${providerNameForGroup(group)} ${group.runs[0]?.baseModel ?? ''}`.toLowerCase()
     return haystack.includes(searchTerm)
   })
-  const visibleFamilies = selected.flatMap((group) => {
-    if ((sourceFilter !== 'all' && group.sourceType !== sourceFilter) || (providerFilter !== 'all' && providerNameForGroup(group) !== providerFilter)) return []
-    const family = familyByRepresentativeId.get(group.id)
-    if (!family) return []
-    const requestedGroups = recencyControl === 'compare'
-      ? [family.baseline, family.recency]
-      : [family.baseline]
-    const conditionGroups = requestedGroups
-      .filter((candidate): candidate is RunGroup => Boolean(candidate))
-      .filter((candidate) => releaseFilter === 'all' || (isHistoricalGroup(candidate) ? 'historical' : 'current') === releaseFilter)
-    const activeRuns = conditionGroups.flatMap((candidate) => candidate.runs.filter((run) => modeControl === 'compare' ? run.mode === 'independent' || run.mode === 'sequential' : run.mode === activeMode))
-    return activeRuns.length ? [{ conditionGroups, activeRuns }] : []
-  })
-  const visibleGroupIds = [...new Set(visibleFamilies.flatMap((family) => family.conditionGroups.map((group) => group.id)))]
-  const visibleRunIds = visibleFamilies.flatMap((family) => family.activeRuns.map((run) => run.id))
+  const visibleGroups = selected.filter((group) => (
+    (sourceFilter === 'all' || group.sourceType === sourceFilter)
+    && (providerFilter === 'all' || providerNameForGroup(group) === providerFilter)
+    && (releaseFilter === 'all' || (isHistoricalGroup(group) ? 'historical' : 'current') === releaseFilter)
+    && group.runs.some((run) => modeControl === 'compare' ? run.mode === 'independent' || run.mode === 'sequential' : run.mode === activeMode)
+  ))
+  const visibleGroupIds = visibleGroups.map((group) => group.id)
+  const visibleRunIds = visibleGroups.flatMap((group) => group.runs.filter((run) => modeControl === 'compare' ? run.mode === 'independent' || run.mode === 'sequential' : run.mode === activeMode).map((run) => run.id))
   const activeFilterCount = [sourceFilter, releaseFilter, providerFilter].filter((value) => value !== 'all').length
   const controlName = `${chartId}-model-controls`
   const filterTitleId = `${chartId}-filter-title`
   const providers = [...new Set(groups.map(providerNameForGroup))]
-  const memoryStatus = modeControl === 'compare' ? 'Comparing both' : modeControl === 'sequential-only' ? 'Showing Sequential' : 'Showing Independent'
-  const recencyStatus = recencyControl === 'compare' ? 'Comparing both' : 'Showing Recency off'
+  const memoryStatus = modeControl === 'compare' ? 'Comparing memory-on and memory-free' : `Showing ${modeLabel(activeMode)}`
 
   useEffect(() => {
     const valid = new Set(groups.map((group) => group.id))
@@ -861,7 +853,7 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
     <AnalysisSection eyebrow={eyebrow} title={title} description={description} note={note}>
       <div className="result-model-explorer">
         <div className="result-model-toolbar">
-          <span><strong>{visibleFamilies.length}</strong> model{visibleFamilies.length === 1 ? '' : 's'} shown · {memoryStatus} · {recencyStatus}</span>
+          <span><strong>{visibleGroups.length}</strong> model{visibleGroups.length === 1 ? '' : 's'} shown · {memoryStatus}</span>
           <div className="accuracy-chart-actions">
             <details className="accuracy-model-picker" name={controlName}>
               <summary><span aria-hidden="true">＋</span> Add models <small>{selected.length}/{groups.length}</small></summary>
@@ -902,34 +894,30 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
           </div>
         </div>
 
-        {visibleFamilies.length ? children({ visibleGroupIds, visibleRunIds, activeMode }) : <div className="result-model-empty" aria-live="polite"><strong>{selected.length ? 'No selected models have this run condition.' : 'No models selected.'}</strong><span>{selected.length ? 'Reset the filters or add another model.' : 'Use Add models to choose one or more model families.'}</span></div>}
+        {visibleGroups.length ? children({ visibleGroupIds, visibleRunIds, activeMode }) : <div className="result-model-empty" aria-live="polite"><strong>{selected.length ? 'No selected models have this run condition.' : 'No models selected.'}</strong><span>{selected.length ? 'Reset the filters or add another model.' : 'Use Add models to choose one or more model families.'}</span></div>}
       </div>
     </AnalysisSection>
   )
 }
 
-function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]; baseline: number | null; metric: Metric }) {
+function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { runs: RunSummary[]; baseline: number | null; metric: Metric; memoryEnabled: boolean }) {
   const allGroups = useMemo(() => groupRuns(runs)
     .filter((group) => group.runs.some((run) => isFiniteNumber(run[metric])))
     .sort((a, b) => compareGroupMetric(a, b, metric)), [runs, metric])
   const groups = useMemo(() => allGroups
-    .filter((group) => !isRecencyGroup(group))
     .sort((a, b) => compareIndependentGroupMetric(a, b, metric)), [allGroups, metric])
-  const recencyGroupsByFamily = useMemo(() => new Map(
-    allGroups.filter(isRecencyGroup).map((group) => [retrievalFamilyKey(group), group]),
-  ), [allGroups])
   const defaults = useMemo(() => groups.map((group) => group.id), [groups])
-  const [memoryEnabled, setMemoryEnabled] = useState(false)
-  const [recencyEnabled, setRecencyEnabled] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>(defaults)
   const [modelSearch, setModelSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState<AccuracySourceFilter>('all')
   const [releaseFilter, setReleaseFilter] = useState<AccuracyReleaseFilter>('all')
   const [providerFilter, setProviderFilter] = useState('all')
-  const [labelSize, setLabelSize] = useState(11)
+  const [labelSize, setLabelSize] = useState(17)
+  const [barWidth, setBarWidth] = useState(34)
   const [showBarValues, setShowBarValues] = useState(metric !== 'infoAlpha')
   const [showGridlines, setShowGridlines] = useState(true)
   const [showCrowdLine, setShowCrowdLine] = useState(true)
+  const [barTooltip, setBarTooltip] = useState<BarTooltip | null>(null)
   const selected = groups.filter((group) => selectedIds.includes(group.id))
   const searchResults = groups.filter((group) => {
     const provider = providerForGroup(group)
@@ -938,7 +926,7 @@ function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]
   })
   const activeMode: Exclude<ForecastMode, 'unknown'> = memoryEnabled ? 'sequential' : 'independent'
   const activeEntries = selected.map((group) => {
-    const activeGroup = recencyEnabled ? recencyGroupsByFamily.get(retrievalFamilyKey(group)) : group
+    const activeGroup = group
     const run = activeGroup?.runs.find((candidate) => candidate.mode === activeMode)
     return { group, activeGroup, run }
   }).filter((entry): entry is { group: RunGroup; activeGroup: RunGroup; run: RunSummary } => Boolean(entry.activeGroup && entry.run && isFiniteNumber(entry.run[metric])))
@@ -953,13 +941,40 @@ function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]
   const values = allGroups.flatMap((group) => group.runs.flatMap((run) => isFiniteNumber(run[metric]) ? [run[metric]] : []))
   const { domainMin, domainMax, axisTicks } = leaderboardDomain(metric, values, baseline)
   const position = (value: number) => Math.max(0, Math.min(100, ((value - domainMin) / (domainMax - domainMin)) * 100))
-  const canvasWidth = Math.max(420, visibleEntries.length * 52 + 80)
+  const canvasWidth = Math.max(420, visibleEntries.length * barWidth + (visibleEntries.length + 1) * 8 + 108)
   const controlName = `${metric}-chart-controls`
   const filterTitleId = `${metric}-filter-title`
   const displayTitleId = `${metric}-display-title`
   const toggleModel = (id: string) => {
     setSelectedIds((current) => current.includes(id) ? current.filter((candidate) => candidate !== id) : [...current, id])
   }
+
+  const revealBarTooltip = (element: HTMLDivElement, run: RunSummary) => {
+    const rect = (element.querySelector('.accuracy-vertical-bar') ?? element).getBoundingClientRect()
+    const anchorY = Math.max(12, rect.top)
+    setBarTooltip({
+      runId: run.id,
+      condition: modeLabel(activeMode),
+      value: formatLeaderboardValue(metric, run[metric]!),
+      coverage: `${percent(run.coverage, 0)} coverage`,
+      x: Math.max(105, Math.min(window.innerWidth - 105, rect.left + rect.width / 2)),
+      y: anchorY >= 120 ? anchorY - 10 : anchorY + Math.min(rect.height, 28) + 10,
+      above: anchorY >= 120,
+    })
+  }
+
+  useEffect(() => {
+    if (!barTooltip) return
+    const dismiss = () => setBarTooltip(null)
+    window.addEventListener('scroll', dismiss, true)
+    window.addEventListener('resize', dismiss)
+    return () => {
+      window.removeEventListener('scroll', dismiss, true)
+      window.removeEventListener('resize', dismiss)
+    }
+  }, [barTooltip?.runId])
+
+  useEffect(() => setBarTooltip(null), [memoryEnabled, metric, selectedIds, sourceFilter, providerFilter, releaseFilter])
 
   const resetFilters = () => {
     setSourceFilter('all')
@@ -968,7 +983,8 @@ function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]
   }
 
   const resetDisplay = () => {
-    setLabelSize(11)
+    setLabelSize(17)
+    setBarWidth(34)
     setShowBarValues(metric !== 'infoAlpha')
     setShowGridlines(true)
     setShowCrowdLine(true)
@@ -992,13 +1008,9 @@ function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]
 
   return (
     <figure className={`accuracy-leaderboard metric-${metric}`}>
-      <div className="accuracy-comparison-switch" role="group" aria-label={`${metricDetails[metric].label} run switches`}>
-        <button type="button" className={memoryEnabled ? 'active' : ''} aria-pressed={memoryEnabled} onClick={() => setMemoryEnabled((enabled) => !enabled)}><span>Memory</span><small>{memoryEnabled ? 'Showing Sequential' : 'Showing Independent'}</small></button>
-        <button type="button" className={recencyEnabled ? 'active' : ''} aria-pressed={recencyEnabled} onClick={() => setRecencyEnabled((enabled) => !enabled)}><span>Recency</span><small>{recencyEnabled ? 'Showing Recency on' : 'Showing Recency off'}</small></button>
-      </div>
       <div className="accuracy-leaderboard-toolbar">
         <div className="accuracy-mode-legend" aria-label="Active run condition">
-          <span><i className="sequential" />{modeLabel(activeMode)} · {recencyEnabled ? 'Recency on' : 'Recency off'}</span>
+          <span className={`memory-legend${memoryEnabled ? ' on' : ''}`}><i />{modeLabel(activeMode)}</span>
           {baseline == null || !showCrowdLine ? null : <span><i className="crowd" />Crowd · {formatLeaderboardValue(metric, baseline)}</span>}
         </div>
         <div className="accuracy-chart-actions">
@@ -1006,7 +1018,7 @@ function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]
             <summary><span aria-hidden="true">＋</span> Add models <small>{selected.length}/{groups.length}</small></summary>
             <div className="accuracy-model-picker-panel">
               <label className="accuracy-model-search"><span className="sr-only">Search models</span><input type="search" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} placeholder="Search models or providers…" /></label>
-              <div className="accuracy-model-options" role="group" aria-label={`Baseline model families shown in the ${metricDetails[metric].label} chart`}>
+              <div className="accuracy-model-options" role="group" aria-label={`Model families shown in the ${metricDetails[metric].label} chart`}>
                 {searchResults.map((group) => {
                   const provider = providerForGroup(group)
                   return <label key={group.id}><input type="checkbox" checked={selectedIds.includes(group.id)} onChange={() => toggleModel(group.id)} /><span><strong>{group.modelName}</strong><small>{provider?.name ?? sourceLabel(group.sourceType)} · All available run variants</small></span></label>
@@ -1046,7 +1058,8 @@ function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]
             <summary className="accuracy-icon-control" aria-label="Chart display settings" title="Display settings"><DisplayGlyph /></summary>
             <div className="accuracy-control-panel accuracy-display-panel" role="dialog" aria-labelledby={displayTitleId}>
               <div className="accuracy-control-heading"><strong id={displayTitleId}>Display</strong></div>
-              <label className="accuracy-label-slider"><span>Model label size <output>{labelSize}px</output></span><input type="range" min="8" max="20" step="1" value={labelSize} onChange={(event) => setLabelSize(Number(event.target.value))} /></label>
+              <label className="accuracy-label-slider"><span>Bar thickness <output>{barWidth}px</output></span><input aria-label="Bar thickness" type="range" min="12" max="44" step="1" value={barWidth} onChange={(event) => setBarWidth(Number(event.target.value))} /></label>
+              <label className="accuracy-label-slider"><span>Model label size <output>{labelSize}px</output></span><input aria-label="Model label size" type="range" min="14" max="28" step="1" value={labelSize} onChange={(event) => setLabelSize(Number(event.target.value))} /></label>
               <AccuracyToggle label="Values on bars" checked={showBarValues} onChange={setShowBarValues} />
               <AccuracyToggle label="Gridlines" checked={showGridlines} onChange={setShowGridlines} />
               <AccuracyToggle label="Crowd benchmark" checked={showCrowdLine} onChange={setShowCrowdLine} disabled={baseline == null} />
@@ -1058,13 +1071,13 @@ function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]
 
       {!visibleEntries.length ? <div className="accuracy-empty" aria-live="polite"><strong>{selected.length ? 'No selected models have this run condition.' : 'No models selected.'}</strong><span>{selected.length ? 'Change a switch or reset the chart filters.' : 'Use “Add models” to choose one or more models.'}</span></div> : (
         <div className="accuracy-chart-scroll" tabIndex={0} aria-label={`Scrollable model ${metricDetails[metric].label.toLowerCase()} chart`}>
-          <div className="accuracy-chart-canvas" style={{ minWidth: `${canvasWidth}px`, '--accuracy-label-size': `${labelSize}px` } as React.CSSProperties}>
+          <div className="accuracy-chart-canvas" style={{ minWidth: `${canvasWidth}px`, '--accuracy-label-size': `${labelSize}px`, '--accuracy-bar-width': `${barWidth}px` } as React.CSSProperties}>
             <div className="accuracy-y-axis" aria-hidden="true">
               {axisTicks.map((tick) => <span key={tick} style={{ bottom: `${position(tick)}%` }}>{formatLeaderboardTick(metric, tick)}</span>)}
             </div>
             <div className="accuracy-plot-field">
               {showGridlines ? axisTicks.map((tick) => <i key={tick} className="accuracy-gridline" style={{ bottom: `${position(tick)}%` }} />) : null}
-              {baseline == null || !showCrowdLine ? null : <div className="accuracy-crowd-line" style={{ bottom: `${position(baseline)}%` }}><span>Crowd {formatLeaderboardValue(metric, baseline)}</span></div>}
+              {baseline == null || !showCrowdLine ? null : <div className="accuracy-crowd-line" style={{ bottom: `${position(baseline)}%` }} />}
               <div className="accuracy-model-groups">
                 {visibleEntries.map(({ group, run }) => {
                   const provider = providerForGroup(group)
@@ -1077,14 +1090,13 @@ function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]
                   const barHeight = Math.max(0.7, Math.abs(valuePosition - originPosition))
                   const isNegative = valuePosition < originPosition
                   const displayValue = formatLeaderboardValue(metric, value)
-                  const conditionLabel = `${modeLabel(activeMode)} · ${recencyEnabled ? 'Recency on' : 'Recency off'}`
+                  const conditionLabel = modeLabel(activeMode)
                   const tooltip = `${group.modelName} · ${conditionLabel} · ${displayValue} ${metricDetails[metric].label.toLowerCase()} · ${percent(run.coverage, 0)} coverage · ${metricDetails[metric].direction.toLowerCase()}`
                   return (
                     <article className="accuracy-model-group" key={group.id} style={chartStyle}>
                       <div className="accuracy-bar-pair single">
-                        <div className="accuracy-bar-slot sequential" tabIndex={0} role="img" aria-label={tooltip}>
+                        <div className="accuracy-bar-slot sequential" tabIndex={0} role="img" aria-label={tooltip} aria-describedby={barTooltip?.runId === run.id ? `${metric}-bar-tooltip` : undefined} onMouseEnter={(event) => revealBarTooltip(event.currentTarget, run)} onMouseLeave={() => setBarTooltip(null)} onFocus={(event) => revealBarTooltip(event.currentTarget, run)} onBlur={() => setBarTooltip(null)}>
                           <div className={`accuracy-vertical-bar${isNegative ? ' negative' : ''}`} style={{ bottom: `${barBottom}%`, height: `${barHeight}%` }}>{showBarValues ? <strong>{displayValue}</strong> : null}</div>
-                          <span className="accuracy-bar-tooltip"><small>{conditionLabel}</small><strong>{displayValue}</strong><span>{percent(run.coverage, 0)} coverage</span></span>
                         </div>
                       </div>
                       <ProviderMark provider={provider} />
@@ -1097,7 +1109,8 @@ function MetricLeaderboardChart({ runs, baseline, metric }: { runs: RunSummary[]
           </div>
         </div>
       )}
-      <figcaption aria-live="polite">Showing {visibleEntries.length} available model{visibleEntries.length === 1 ? '' : 's'} · Showing {modeLabel(activeMode)} · Showing {recencyEnabled ? 'Recency on' : 'Recency off'}{activeFilterCount ? ` · ${activeFilterCount} active filter${activeFilterCount === 1 ? '' : 's'}` : ''}.</figcaption>
+      <figcaption aria-live="polite">{visibleEntries.length} model{visibleEntries.length === 1 ? '' : 's'}{activeFilterCount ? ` · ${activeFilterCount} active filter${activeFilterCount === 1 ? '' : 's'}` : ''}</figcaption>
+      {barTooltip ? createPortal(<div id={`${metric}-bar-tooltip`} className={`accuracy-bar-tooltip floating${barTooltip.above ? ' above' : ''}`} role="tooltip" style={{ left: barTooltip.x, top: barTooltip.y }}><small>{barTooltip.condition}</small><strong>{barTooltip.value}</strong><span>{barTooltip.coverage}</span></div>, document.body) : null}
     </figure>
   )
 }
@@ -1112,7 +1125,9 @@ type ResearchScatterDatum = {
   murphy?: MurphySummary
 }
 
-function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murphy: MurphySummary[]; kind: ResearchScatterKind }) {
+function ResearchScatterChart({ runs, murphy, kind, memoryEnabled }: { runs: RunSummary[]; murphy: MurphySummary[]; kind: ResearchScatterKind; memoryEnabled: boolean }) {
+  const plotRef = useRef<HTMLDivElement>(null)
+  const [plotSize, setPlotSize] = useState({ width: 958, height: 484 })
   const murphyByRunId = useMemo(() => new Map(murphy.map((row) => [row.runId, row])), [murphy])
   const eligibleRunIds = useMemo(() => new Set(
     kind === 'murphy'
@@ -1122,19 +1137,13 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
   const allGroups = useMemo(() => groupRuns(runs)
     .filter((group) => group.runs.some((run) => eligibleRunIds.has(run.id))), [eligibleRunIds, runs])
   const groups = useMemo(() => allGroups
-    .filter((group) => !isRecencyGroup(group))
     .sort((a, b) => compareIndependentGroupMetric(a, b, kind === 'murphy' ? 'brier' : 'infoAlpha')), [allGroups, kind])
-  const recencyGroupsByFamily = useMemo(() => new Map(
-    allGroups.filter(isRecencyGroup).map((group) => [retrievalFamilyKey(group), group]),
-  ), [allGroups])
   const defaults = useMemo(() => groups.map((group) => group.id), [groups])
-  const [memoryEnabled, setMemoryEnabled] = useState(false)
-  const [recencyEnabled, setRecencyEnabled] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>(defaults)
   const [modelSearch, setModelSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState<AccuracySourceFilter>('all')
   const [providerFilter, setProviderFilter] = useState('all')
-  const [labelSize, setLabelSize] = useState(11)
+  const [labelSize, setLabelSize] = useState(17)
   const [showLabels, setShowLabels] = useState(true)
   const [showGridlines, setShowGridlines] = useState(true)
   const [showReference, setShowReference] = useState(true)
@@ -1146,36 +1155,35 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
     const provider = providerForGroup(group)
     return `${group.modelName} ${provider?.name ?? ''} ${group.runs[0]?.baseModel ?? ''}`.toLowerCase().includes(searchTerm)
   })
-  const activeData: ResearchScatterDatum[] = selected.flatMap((group): ResearchScatterDatum[] => {
-    const activeGroup = recencyEnabled ? recencyGroupsByFamily.get(retrievalFamilyKey(group)) : group
-    const run = activeGroup?.runs.find((candidate) => candidate.mode === activeMode && eligibleRunIds.has(candidate.id))
-    if (!activeGroup || !run) return []
+  const comparisonData: ResearchScatterDatum[] = selected.flatMap((group): ResearchScatterDatum[] => {
     const provider = providerForGroup(group)
-    if (kind === 'murphy') {
-      const row = murphyByRunId.get(run.id)
-      return row ? [{ group, run, provider, x: row.reliability, y: row.resolution, murphy: row }] : []
-    }
-    return isFiniteNumber(run.avgUsd) && run.avgUsd > 0 && isFiniteNumber(run.infoAlpha)
-      ? [{ group, run, provider, x: run.avgUsd, y: run.infoAlpha }]
-      : []
+    if ((sourceFilter !== 'all' && group.sourceType !== sourceFilter) || (providerFilter !== 'all' && provider?.name !== providerFilter)) return []
+    return group.runs.filter((run) => eligibleRunIds.has(run.id) && (run.mode === 'independent' || run.mode === 'sequential'))
+      .flatMap((run): ResearchScatterDatum[] => {
+        if (kind === 'murphy') {
+          const row = murphyByRunId.get(run.id)
+          return row ? [{ group, run, provider, x: row.reliability, y: row.resolution, murphy: row }] : []
+        }
+        return isFiniteNumber(run.avgUsd) && run.avgUsd > 0 && isFiniteNumber(run.infoAlpha)
+          ? [{ group, run, provider, x: run.avgUsd, y: run.infoAlpha }]
+          : []
+      })
   })
-  const visibleData = activeData.filter(({ group, provider }) => (
-    (sourceFilter === 'all' || group.sourceType === sourceFilter)
-    && (providerFilter === 'all' || provider?.name === providerFilter)
-  ))
+  const visibleData = comparisonData.filter((point) => point.run.mode === activeMode)
   const activeFilterCount = [sourceFilter, providerFilter].filter((value) => value !== 'all').length
   const controlName = `${kind}-scatter-controls`
   const filterTitleId = `${kind}-scatter-filter-title`
   const displayTitleId = `${kind}-scatter-display-title`
-  const crowd = kind === 'murphy' ? visibleData.find((point) => point.murphy)?.murphy?.crowd ?? null : null
-  const xValues = [...visibleData.map((point) => point.x), ...(crowd ? [crowd.reliability] : [])]
-  const yValues = [...visibleData.map((point) => point.y), ...(crowd ? [crowd.resolution] : []), ...(kind === 'cost' ? [0] : [])]
-  const xDomain = kind === 'cost' ? logarithmicDomain(xValues) : { min: 0, max: niceAxisMaximum(Math.max(...xValues, 0.01)) }
-  const yDomain = kind === 'murphy'
-    ? { min: 0, max: niceAxisMaximum(Math.max(...yValues, 0.1)) }
-    : paddedLinearDomain(yValues)
+  const crowd = kind === 'murphy' ? comparisonData.find((point) => point.murphy)?.murphy?.crowd ?? null : null
+  // Keep scales stable when switching memory modes; selection and filters still refit the axes.
+  const xValues = [...comparisonData.map((point) => point.x), ...(crowd && showReference ? [crowd.reliability] : [])]
+  const yValues = [...comparisonData.map((point) => point.y), ...(crowd && showReference ? [crowd.resolution] : []), ...(kind === 'cost' && showReference ? [0] : [])]
+  const xDomain = kind === 'cost' ? logarithmicDomain(xValues) : paddedLinearDomain(xValues, true)
+  const yDomain = paddedLinearDomain(yValues, kind === 'murphy')
   const xTicks = kind === 'cost' ? logarithmicTicks(xDomain.min, xDomain.max) : linearTicks(xDomain.min, xDomain.max)
   const yTicks = linearTicks(yDomain.min, yDomain.max)
+  const xTickStep = xTicks.length > 1 ? xTicks[1] - xTicks[0] : xDomain.max - xDomain.min
+  const yTickStep = yTicks.length > 1 ? yTicks[1] - yTicks[0] : yDomain.max - yDomain.min
   const xPosition = (value: number) => clampPercent(kind === 'cost'
     ? ((Math.log10(value) - Math.log10(xDomain.min)) / (Math.log10(xDomain.max) - Math.log10(xDomain.min))) * 100
     : ((value - xDomain.min) / (xDomain.max - xDomain.min)) * 100)
@@ -1183,8 +1191,21 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
   const frontier = kind === 'cost' ? paretoFrontier(visibleData) : []
   const frontierIds = new Set(frontier.map((point) => point.run.id))
   const frontierPath = frontier.map((point) => `${xPosition(point.x)},${100 - yPosition(point.y)}`).join(' ')
-  const conditionLabel = `${modeLabel(activeMode)} · ${recencyEnabled ? 'Recency on' : 'Recency off'}`
+  const conditionLabel = modeLabel(activeMode)
   const providers = modelProviders.filter((provider) => groups.some((group) => providerForGroup(group)?.name === provider.name))
+  const labelPoints = [
+    ...visibleData.map((point) => ({ id: point.run.id, label: compactLeaderboardName(point.group.modelName), x: xPosition(point.x) / 100 * plotSize.width, y: (1 - yPosition(point.y) / 100) * plotSize.height })),
+    ...(crowd && showReference ? [{ id: 'market-crowd', label: 'Market crowd', x: xPosition(crowd.reliability) / 100 * plotSize.width, y: (1 - yPosition(crowd.resolution) / 100) * plotSize.height }] : []),
+  ]
+  const labelPlacements = placeScatterLabels(labelPoints, labelSize, plotSize)
+
+  useEffect(() => {
+    const plot = plotRef.current
+    if (!plot) return
+    const observer = new ResizeObserver(([entry]) => setPlotSize({ width: entry.contentRect.width, height: entry.contentRect.height }))
+    observer.observe(plot)
+    return () => observer.disconnect()
+  }, [visibleData.length])
 
   useEffect(() => {
     const valid = new Set(groups.map((group) => group.id))
@@ -1204,7 +1225,7 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
   }
 
   const resetDisplay = () => {
-    setLabelSize(11)
+    setLabelSize(17)
     setShowLabels(true)
     setShowGridlines(true)
     setShowReference(true)
@@ -1213,14 +1234,10 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
 
   return (
     <figure className={`research-scatter research-scatter-${kind}`}>
-      <div className="accuracy-comparison-switch" role="group" aria-label={`${kind === 'murphy' ? 'Murphy decomposition' : 'Cost efficiency'} run switches`}>
-        <button type="button" className={memoryEnabled ? 'active' : ''} aria-pressed={memoryEnabled} onClick={() => setMemoryEnabled((enabled) => !enabled)}><span>Memory</span><small>{memoryEnabled ? 'Showing Sequential' : 'Showing Independent'}</small></button>
-        <button type="button" className={recencyEnabled ? 'active' : ''} aria-pressed={recencyEnabled} onClick={() => setRecencyEnabled((enabled) => !enabled)}><span>Recency</span><small>{recencyEnabled ? 'Showing Recency on' : 'Showing Recency off'}</small></button>
-      </div>
 
       <div className="accuracy-leaderboard-toolbar">
         <div className="accuracy-mode-legend" aria-label="Active run condition and chart references">
-          <span><i className="sequential" />{conditionLabel}</span>
+          <span className={`memory-legend${memoryEnabled ? ' on' : ''}`}><i />{conditionLabel}</span>
           {kind === 'murphy' && showReference ? <span><i className="scatter-crowd" />Market crowd</span> : null}
           {kind === 'cost' && showReference ? <span><i className="crowd" />Crowd alpha · 0.000</span> : null}
           {kind === 'cost' && showFrontier ? <span><i className="scatter-frontier" />Pareto frontier</span> : null}
@@ -1266,7 +1283,7 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
             <summary className="accuracy-icon-control" aria-label="Chart display settings" title="Display settings"><DisplayGlyph /></summary>
             <div className="accuracy-control-panel accuracy-display-panel" role="dialog" aria-labelledby={displayTitleId}>
               <div className="accuracy-control-heading"><strong id={displayTitleId}>Display</strong></div>
-              <label className="accuracy-label-slider"><span>Model label size <output>{labelSize}px</output></span><input type="range" min="9" max="20" step="1" value={labelSize} onChange={(event) => setLabelSize(Number(event.target.value))} /></label>
+              <label className="accuracy-label-slider"><span>Model label size <output>{labelSize}px</output></span><input aria-label="Model label size" type="range" min="14" max="28" step="1" value={labelSize} onChange={(event) => setLabelSize(Number(event.target.value))} /></label>
               <AccuracyToggle label="Model labels" checked={showLabels} onChange={setShowLabels} />
               <AccuracyToggle label="Gridlines" checked={showGridlines} onChange={setShowGridlines} />
               <AccuracyToggle label={kind === 'murphy' ? 'Crowd point' : 'Crowd benchmark'} checked={showReference} onChange={setShowReference} />
@@ -1278,16 +1295,20 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
       </div>
 
       {!visibleData.length ? <div className="accuracy-empty" aria-live="polite"><strong>{selected.length ? 'No selected models have this run condition.' : 'No models selected.'}</strong><span>{selected.length ? 'Change a switch or reset the chart filters.' : 'Use “Add models” to choose one or more models.'}</span></div> : (
-        <div className="research-scatter-scroll" tabIndex={0} aria-label={`Scrollable ${kind === 'murphy' ? 'Murphy decomposition' : 'information alpha versus cost'} chart`}>
+        <div className="research-scatter-scroll" tabIndex={0} aria-label={`Scrollable ${kind === 'murphy' ? 'Murphy decomposition' : 'information alpha versus cost'} chart. Axes fit selected models and share the same scale across memory modes.`}>
           <div className="research-scatter-canvas" style={{ '--scatter-label-size': `${labelSize}px` } as React.CSSProperties}>
             <span className="research-scatter-y-title">{kind === 'murphy' ? 'Resolution · higher is better' : 'Information alpha · higher is better'}</span>
-            <div className="research-scatter-plot">
+            <div className="research-scatter-plot" ref={plotRef}>
               {showGridlines ? xTicks.map((tick) => <i key={`x-${tick}`} className="research-scatter-grid vertical" style={{ left: `${xPosition(tick)}%` }} />) : null}
               {showGridlines ? yTicks.map((tick) => <i key={`y-${tick}`} className="research-scatter-grid horizontal" style={{ bottom: `${yPosition(tick)}%` }} />) : null}
-              {xTicks.map((tick) => <span key={`xt-${tick}`} className="research-scatter-x-tick" style={{ left: `${xPosition(tick)}%` }}>{formatScatterAxis(kind, tick)}</span>)}
-              {yTicks.map((tick) => <span key={`yt-${tick}`} className="research-scatter-y-tick" style={{ bottom: `${yPosition(tick)}%` }}>{tick.toFixed(kind === 'murphy' ? 2 : 1)}</span>)}
-              {kind === 'cost' && showReference ? <div className="research-scatter-zero" style={{ bottom: `${yPosition(0)}%` }}><span>Crowd</span></div> : null}
+              {xTicks.map((tick) => <span key={`xt-${tick}`} className="research-scatter-x-tick" style={{ left: `${xPosition(tick)}%` }}>{kind === 'cost' ? scatterMoney(tick) : formatLinearScatterTick(tick, xTickStep, 3)}</span>)}
+              {yTicks.map((tick) => <span key={`yt-${tick}`} className="research-scatter-y-tick" style={{ bottom: `${yPosition(tick)}%` }}>{formatLinearScatterTick(tick, yTickStep, kind === 'murphy' ? 2 : 1)}</span>)}
+              {kind === 'cost' && showReference ? <div className="research-scatter-zero" style={{ bottom: `${yPosition(0)}%` }} /> : null}
               {kind === 'cost' && showFrontier && frontier.length > 1 ? <svg className="research-scatter-frontier" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points={frontierPath} /></svg> : null}
+              {showLabels ? <svg className="research-scatter-label-lines" viewBox={`0 0 ${plotSize.width} ${plotSize.height}`} aria-hidden="true">{labelPoints.map((point) => {
+                const label = labelPlacements.get(point.id)!
+                return label.leader.visible ? <line key={point.id} x1={label.leader.x1} y1={label.leader.y1} x2={label.leader.x2} y2={label.leader.y2} /> : null
+              })}</svg> : null}
 
               {visibleData.map((point) => {
                 const x = xPosition(point.x)
@@ -1295,14 +1316,14 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
                 const logo = point.provider ? providerLogos[point.provider.name] : undefined
                 const horizontal = x > 76 ? 'left' : x < 24 ? 'right' : 'center'
                 const vertical = y > 72 ? 'below' : 'above'
-                const labelPosition = y < 13 ? 'above' : 'below'
+                const label = labelPlacements.get(point.run.id)!
                 const aria = kind === 'murphy' && point.murphy
                   ? `${point.group.modelName}, ${conditionLabel}, reliability ${point.murphy.reliability.toFixed(3)}, resolution ${point.murphy.resolution.toFixed(3)}, uncertainty ${point.murphy.uncertainty.toFixed(3)}, Brier ${point.murphy.brier.toFixed(3)}`
                   : `${point.group.modelName}, ${conditionLabel}, information alpha ${point.y.toFixed(3)}, recorded cost ${scatterMoney(point.x)} per checkpoint${frontierIds.has(point.run.id) ? ', Pareto efficient' : ''}`
                 return (
                   <button type="button" key={point.run.id} className={`research-scatter-point${frontierIds.has(point.run.id) ? ' frontier-point' : ''}`} style={{ left: `${x}%`, bottom: `${y}%`, '--provider-color': point.provider?.color ?? '#887566' } as React.CSSProperties} aria-label={aria}>
                     <span className="research-scatter-marker">{logo ? <img src={logo} alt="" /> : <span aria-hidden="true">•</span>}</span>
-                    {showLabels ? <span className={`research-scatter-model-label ${labelPosition}`} title={point.group.modelName}>{compactLeaderboardName(point.group.modelName)}</span> : null}
+                    {showLabels ? <span className="research-scatter-model-label placed" style={{ left: 14 + label.dx, top: 14 + label.dy - label.height / 2, width: label.width }} title={point.group.modelName}>{compactLeaderboardName(point.group.modelName)}</span> : null}
                     <span className={`research-scatter-tooltip ${horizontal} ${vertical}`}>
                       <small>{point.provider?.name ?? sourceLabel(point.group.sourceType)} · {conditionLabel}</small>
                       <strong>{point.group.modelName}</strong>
@@ -1329,7 +1350,7 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
                 const y = yPosition(crowd.resolution)
                 const horizontal = x > 76 ? 'left' : x < 24 ? 'right' : 'center'
                 const vertical = y > 72 ? 'below' : 'above'
-                return <button type="button" className="research-scatter-point crowd-point" style={{ left: `${x}%`, bottom: `${y}%` }} aria-label={`Market crowd, reliability ${crowd.reliability.toFixed(3)}, resolution ${crowd.resolution.toFixed(3)}, uncertainty ${crowd.uncertainty.toFixed(3)}, Brier ${crowd.brier.toFixed(3)}`}><span className="research-scatter-marker"><span aria-hidden="true">C</span></span>{showLabels ? <span className="research-scatter-model-label below">Market crowd</span> : null}<span className={`research-scatter-tooltip ${horizontal} ${vertical}`}><small>Human collective-judgment baseline</small><strong>Market crowd</strong><span><b>Reliability</b><em>{crowd.reliability.toFixed(3)}</em></span><span><b>Resolution</b><em>{crowd.resolution.toFixed(3)}</em></span><span><b>Uncertainty</b><em>{crowd.uncertainty.toFixed(3)}</em></span><span><b>REL − RES + UNC</b><em>{crowd.brier.toFixed(3)}</em></span><span><b>Option slots</b><em>{number(crowd.n)}</em></span></span></button>
+                return <button type="button" className="research-scatter-point crowd-point" style={{ left: `${x}%`, bottom: `${y}%` }} aria-label={`Market crowd, reliability ${crowd.reliability.toFixed(3)}, resolution ${crowd.resolution.toFixed(3)}, uncertainty ${crowd.uncertainty.toFixed(3)}, Brier ${crowd.brier.toFixed(3)}`}><span className="research-scatter-marker"><span aria-hidden="true">C</span></span>{showLabels ? <span className="research-scatter-model-label placed" style={{ left: 14 + labelPlacements.get('market-crowd')!.dx, top: 14 + labelPlacements.get('market-crowd')!.dy - labelPlacements.get('market-crowd')!.height / 2, width: labelPlacements.get('market-crowd')!.width }}>Market crowd</span> : null}<span className={`research-scatter-tooltip ${horizontal} ${vertical}`}><small>Human collective-judgment baseline</small><strong>Market crowd</strong><span><b>Reliability</b><em>{crowd.reliability.toFixed(3)}</em></span><span><b>Resolution</b><em>{crowd.resolution.toFixed(3)}</em></span><span><b>Uncertainty</b><em>{crowd.uncertainty.toFixed(3)}</em></span><span><b>REL − RES + UNC</b><em>{crowd.brier.toFixed(3)}</em></span><span><b>Option slots</b><em>{number(crowd.n)}</em></span></span></button>
               })() : null}
             </div>
             <span className="research-scatter-x-title">{kind === 'murphy' ? 'Reliability · lower is better' : 'Recorded USD per checkpoint · lower is better · logarithmic scale'}</span>
@@ -1338,10 +1359,112 @@ function ResearchScatterChart({ runs, murphy, kind }: { runs: RunSummary[]; murp
       )}
 
       <figcaption>{kind === 'murphy'
-        ? `Showing ${visibleData.length} model${visibleData.length === 1 ? '' : 's'} · Brier = reliability − resolution + uncertainty; components are classwise and scaled to per-checkpoint units.`
-        : `Showing ${visibleData.length} priced model${visibleData.length === 1 ? '' : 's'} · The frontier marks runs not beaten by a cheaper run with equal or better information alpha; zero-price and unavailable records are omitted.`}</figcaption>
+        ? `Showing ${visibleData.length} model${visibleData.length === 1 ? '' : 's'} · Classwise components, scaled per checkpoint.`
+        : `Showing ${visibleData.length} priced model${visibleData.length === 1 ? '' : 's'} · Frontier: best information alpha at each cost.`}</figcaption>
     </figure>
   )
+}
+
+type ScatterLabelPoint = { id: string; label: string; x: number; y: number }
+type ScatterLabelBox = { x: number; y: number; width: number; height: number }
+type ScatterLeader = { x1: number; y1: number; x2: number; y2: number; visible: boolean }
+
+function placeScatterLabels(points: ScatterLabelPoint[], fontSize: number, size: { width: number; height: number }) {
+  const placements = new Map<string, { box: ScatterLabelBox; leader: ScatterLeader }>()
+  const markers = points.map((point) => ({ x: point.x - 19, y: point.y - 19, width: 38, height: 38 }))
+  const height = fontSize * 1.12 + 4
+  const directions = [[0, -1], [0, 1], [1, 0], [-1, 0], [1, -1], [-1, -1], [1, 1], [-1, 1]]
+  const candidatesById = new Map(points.map((point) => {
+    const width = Math.min(210, point.label.length * fontSize * 0.62 + 12)
+    const candidates = [0, 12, 28, 48, 76, 108].flatMap((extra) => directions.map(([dx, dy]) => {
+      const gap = 27 + extra
+      return {
+        x: Math.max(0, Math.min(size.width - width, point.x + (dx > 0 ? gap : dx < 0 ? -gap - width : -width / 2))),
+        y: Math.max(0, Math.min(size.height - height, point.y + (dy > 0 ? gap : dy < 0 ? -gap - height : -height / 2))),
+        width,
+        height,
+      }
+    }))
+    return [point.id, candidates] as const
+  }))
+  const overlaps = (a: ScatterLabelBox, b: ScatterLabelBox) => a.x < b.x + b.width + 5 && a.x + a.width + 5 > b.x && a.y < b.y + b.height + 5 && a.y + a.height + 5 > b.y
+  const density = (point: ScatterLabelPoint) => points.filter((other) => Math.hypot(point.x - other.x, point.y - other.y) < 130).length
+  const ordered = [...points].sort((a, b) => density(b) - density(a) || a.x - b.x || a.y - b.y)
+  const choosePlacement = (point: ScatterLabelPoint) => {
+    let best: { box: ScatterLabelBox; leader: ScatterLeader; score: number } | null = null
+    for (const box of candidatesById.get(point.id)!) {
+      const leader = scatterLeader(point, box)
+      let collisions = markers.filter((marker) => overlaps(box, marker)).length
+      let obstructed = 0
+      let crossings = 0
+      for (const [id, other] of placements) {
+        if (id === point.id) continue
+        if (overlaps(box, other.box)) collisions += 1
+        if (scatterLineHitsBox(leader, other.box)) obstructed += 1
+        if (scatterLineHitsBox(other.leader, box)) obstructed += 1
+        if (scatterLinesCross(leader, other.leader)) crossings += 1
+      }
+      for (const other of points) {
+        if (other.id !== point.id && scatterLineNearPoint(leader, other, 18)) obstructed += 1
+      }
+      const length = Math.hypot(leader.x2 - leader.x1, leader.y2 - leader.y1)
+      const centerDistance = (box.x + box.width / 2 - point.x) ** 2 + (box.y + box.height / 2 - point.y) ** 2
+      const score = collisions * 10_000_000 + (obstructed + crossings) * 200_000 + length ** 2 + centerDistance * 0.01
+      if (!best || score < best.score) best = { box, leader, score }
+    }
+    return best!
+  }
+  for (const point of ordered) placements.set(point.id, choosePlacement(point))
+  // Refine the entire layout so earlier labels can move to remove later crossings.
+  for (let pass = 0; pass < 6; pass += 1) {
+    let changed = false
+    for (const point of ordered) {
+      const previous = placements.get(point.id)!
+      const next = choosePlacement(point)
+      if (previous.box.x !== next.box.x || previous.box.y !== next.box.y) changed = true
+      placements.set(point.id, next)
+    }
+    if (!changed) break
+  }
+  return new Map(points.map((point) => {
+    const { box, leader } = placements.get(point.id)!
+    return [point.id, { dx: box.x + box.width / 2 - point.x, dy: box.y + box.height / 2 - point.y, width: box.width, height: box.height, leader }] as const
+  }))
+}
+
+function scatterLeader(point: ScatterLabelPoint, box: ScatterLabelBox): ScatterLeader {
+  const targetX = Math.max(box.x, Math.min(box.x + box.width, point.x))
+  const targetY = Math.max(box.y, Math.min(box.y + box.height, point.y))
+  const dx = targetX - point.x, dy = targetY - point.y
+  const distance = Math.hypot(dx, dy)
+  const ux = distance ? dx / distance : 0, uy = distance ? dy / distance : 0
+  return { x1: point.x + ux * 17, y1: point.y + uy * 17, x2: targetX - ux * 3, y2: targetY - uy * 3, visible: distance > 24 }
+}
+
+function scatterLinesCross(a: ScatterLeader, b: ScatterLeader) {
+  if (!a.visible || !b.visible) return false
+  const side = (line: ScatterLeader, x: number, y: number) => (line.x2 - line.x1) * (y - line.y1) - (line.y2 - line.y1) * (x - line.x1)
+  return side(a, b.x1, b.y1) * side(a, b.x2, b.y2) < -1e-8 && side(b, a.x1, a.y1) * side(b, a.x2, a.y2) < -1e-8
+}
+
+function scatterLineHitsBox(line: ScatterLeader, box: ScatterLabelBox) {
+  if (!line.visible) return false
+  const inside = (x: number, y: number) => x >= box.x - 2 && x <= box.x + box.width + 2 && y >= box.y - 2 && y <= box.y + box.height + 2
+  if (inside(line.x1, line.y1) || inside(line.x2, line.y2)) return true
+  const left = box.x - 2, right = box.x + box.width + 2, top = box.y - 2, bottom = box.y + box.height + 2
+  return [
+    { x1: left, y1: top, x2: right, y2: top, visible: true },
+    { x1: right, y1: top, x2: right, y2: bottom, visible: true },
+    { x1: right, y1: bottom, x2: left, y2: bottom, visible: true },
+    { x1: left, y1: bottom, x2: left, y2: top, visible: true },
+  ].some((edge) => scatterLinesCross(line, edge))
+}
+
+function scatterLineNearPoint(line: ScatterLeader, point: ScatterLabelPoint, radius: number) {
+  if (!line.visible) return false
+  const dx = line.x2 - line.x1, dy = line.y2 - line.y1
+  const fraction = Math.max(0, Math.min(1, ((point.x - line.x1) * dx + (point.y - line.y1) * dy) / (dx ** 2 + dy ** 2 || 1)))
+  return Math.hypot(line.x1 + dx * fraction - point.x, line.y1 + dy * fraction - point.y) < radius
 }
 
 function niceAxisMaximum(value: number) {
@@ -1352,40 +1475,41 @@ function niceAxisMaximum(value: number) {
   return multiplier * magnitude
 }
 
-function paddedLinearDomain(values: number[]) {
+function paddedLinearDomain(values: number[], nonNegative = false) {
   const finiteValues = values.filter(Number.isFinite)
-  if (!finiteValues.length) return { min: -1, max: 1 }
+  if (!finiteValues.length) return { min: nonNegative ? 0 : -1, max: 1 }
   const rawMin = Math.min(...finiteValues)
   const rawMax = Math.max(...finiteValues)
-  const span = rawMax - rawMin || Math.max(Math.abs(rawMin), Math.abs(rawMax), 0.1)
-  const step = niceAxisMaximum(span / 4)
-  const min = Math.floor((rawMin - span * 0.08) / step) * step
-  const max = Math.ceil((rawMax + span * 0.08) / step) * step
-  return min === max ? { min: min - step, max: max + step } : { min, max }
+  const padding = rawMax > rawMin ? (rawMax - rawMin) * 0.1 : Math.max(Math.abs(rawMin) * 0.1, 0.0001)
+  return { min: nonNegative ? Math.max(0, rawMin - padding) : rawMin - padding, max: rawMax + padding }
 }
 
 function logarithmicDomain(values: number[]) {
   const positive = values.filter((value) => Number.isFinite(value) && value > 0)
   if (!positive.length) return { min: 0.01, max: 10 }
-  const min = 10 ** Math.floor(Math.log10(Math.min(...positive)))
-  let max = 10 ** Math.ceil(Math.log10(Math.max(...positive)))
-  if (max <= min) max = min * 10
-  return { min, max }
+  const logValues = positive.map(Math.log10)
+  const rawMin = Math.min(...logValues)
+  const rawMax = Math.max(...logValues)
+  const padding = rawMax > rawMin ? (rawMax - rawMin) * 0.1 : 0.15
+  return { min: 10 ** (rawMin - padding), max: 10 ** (rawMax + padding) }
 }
 
-function linearTicks(min: number, max: number, segments = 4) {
-  return Array.from({ length: segments + 1 }, (_, index) => min + ((max - min) * index) / segments)
+function linearTicks(min: number, max: number, segments = 5) {
+  const step = niceAxisMaximum((max - min) / segments)
+  const first = Math.ceil(min / step - 1e-9)
+  const last = Math.floor(max / step + 1e-9)
+  return Array.from({ length: Math.max(0, last - first + 1) }, (_, index) => Number(((first + index) * step).toPrecision(12)))
 }
 
 function logarithmicTicks(min: number, max: number) {
   const ticks: number[] = []
   for (let exponent = Math.floor(Math.log10(min)); exponent <= Math.ceil(Math.log10(max)); exponent += 1) {
-    for (const multiplier of [1, 3]) {
+    for (const multiplier of [1, 2, 5]) {
       const value = multiplier * 10 ** exponent
       if (value >= min && value <= max) ticks.push(value)
     }
   }
-  return ticks
+  return ticks.length >= 3 ? ticks : linearTicks(min, max, 4)
 }
 
 function paretoFrontier(points: ResearchScatterDatum[]) {
@@ -1404,9 +1528,12 @@ function clampPercent(value: number) {
   return Math.max(0, Math.min(100, value))
 }
 
-function formatScatterAxis(kind: ResearchScatterKind, value: number) {
-  if (kind === 'murphy') return value.toFixed(value < 0.1 ? 3 : 2)
-  return scatterMoney(value)
+function formatLinearScatterTick(value: number, step: number, minDecimals: number) {
+  const exponent = Math.floor(Math.log10(step))
+  const coefficient = step / 10 ** exponent
+  const fractionalStep = Math.abs(coefficient - Math.round(coefficient)) > 1e-8
+  const decimals = Math.min(8, Math.max(minDecimals, -exponent + (fractionalStep ? 1 : 0)))
+  return (Math.abs(value) < step * 1e-8 ? 0 : value).toFixed(decimals)
 }
 
 function scatterMoney(value: number) {
@@ -1693,7 +1820,7 @@ function CheckpointActivity({ rows, fallbackDates, processState, processError, o
                   <summary>Full belief notebook</summary>
                   <div className="notebook-content">{row.notebook}</div>
                 </details>
-              ) : <p className="notebook-missing">{row.mode === 'independent' ? 'Independent runs do not carry a notebook between checkpoints.' : row.notebookAvailable && processState !== 'loaded' ? 'This notebook is available on Hugging Face; load the full process records above to view it.' : 'No notebook text was recorded for this checkpoint.'}</p>}
+              ) : <p className="notebook-missing">{row.mode === 'independent' ? 'Memory-free runs do not carry a belief notebook between forecast steps.' : row.notebookAvailable && processState !== 'loaded' ? 'This notebook is available on Hugging Face; load the full process records above to view it.' : 'No notebook text was recorded for this checkpoint.'}</p>}
             </article>
           )
         })}
@@ -1823,17 +1950,8 @@ function providerNameForGroup(group: RunGroup) {
   return providerForGroup(group)?.name ?? 'Other'
 }
 
-function isRecencyGroup(group: RunGroup) {
-  const retrieval = group.runs[0]?.retrieval?.toLowerCase()
-  return retrieval === 'rec70' || retrieval === 'recency'
-}
-
 function isHistoricalGroup(group: RunGroup) {
   return group.runs[0]?.protocol?.toLowerCase().includes('historical') ?? false
-}
-
-function retrievalFamilyKey(group: RunGroup) {
-  return baseModelForGroup(group).replace(/-(?:rec70|recency)(?=-|$)/g, '')
 }
 
 function defaultResultGroupIds(groups: RunGroup[]) {
@@ -1864,17 +1982,6 @@ function dedupePairedModes(comparisons: PairedModeComparison[]) {
     seen.add(key)
     return true
   })
-}
-
-function comparisonModelKey(modelName: string) {
-  return modelName.toLowerCase().replace(/\s*(?:·|\uFFFD)\s*recency\s*$/i, '').replace(/\s+/g, ' ').trim()
-}
-
-function recencyComparisonRunIds(runs: RunSummary[], comparisons: RecencyComparison[]) {
-  const conditions = new Set(comparisons.map((row) => `${comparisonModelKey(row.modelName)}:${row.mode}`))
-  return runs
-    .filter((run) => conditions.has(`${comparisonModelKey(run.modelName)}:${run.mode}`))
-    .map((run) => run.id)
 }
 
 function defaultMetricGroupIds(groups: RunGroup[], metric: Metric) {
@@ -2021,13 +2128,9 @@ function heatColor(value: number | null | undefined, metric: Metric, minimum: nu
   return `rgba(102, 83, 166, ${0.07 + direction * 0.3})`
 }
 
-function percentagePoints(value: number) {
-  return `${(value * 100).toFixed(1)} points`
-}
-
 function sourceLabel(source: SourceType) { return source === 'open' ? 'Open-source' : 'Closed-source' }
-function modeLabel(mode: ForecastMode) { return mode === 'unknown' ? 'Mode unavailable' : mode[0].toUpperCase() + mode.slice(1) }
-function retrievalLabel(retrieval: string | undefined) { return retrieval === 'rec70' || retrieval === 'recency' ? 'Recency weighted' : 'Baseline retrieval' }
+function modeLabel(mode: ForecastMode) { return mode === 'sequential' ? 'Memory-on' : mode === 'independent' ? 'Memory-free' : 'Mode unavailable' }
+function retrievalLabel(_retrieval: string | undefined) { return 'Dated research' }
 function humanize(value: string) { return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) }
 function number(value: number) { return new Intl.NumberFormat('en-US').format(value) }
 function percent(value: number | null | undefined, digits = 1) { return value == null ? '—' : `${(value * 100).toFixed(digits)}%` }

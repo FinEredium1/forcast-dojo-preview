@@ -65,7 +65,15 @@ export async function loadQuestion(item: QuestionIndexItem) {
 export async function loadTrajectories(item: QuestionIndexItem, manifest: Manifest) {
   if (item.split !== 'eval') return []
   try {
-    return await getJson<TrajectoryRow[]>(`${webAssetBase(manifest)}trajectories/${encodeURIComponent(item.id)}.json`)
+    const [rows, runs] = await Promise.all([
+      getJson<TrajectoryRow[]>(`${webAssetBase(manifest)}trajectories/${encodeURIComponent(item.id)}.json`),
+      loadRunSummaries(),
+    ])
+    const publishedRuns = new Map(runs.map((run) => [run.id, run]))
+    return rows.filter((row) => publishedRuns.has(row.runId)).map((row) => ({
+      ...row,
+      modelName: publishedRuns.get(row.runId)!.modelName,
+    }))
   } catch (error) {
     throw remoteError('forecast trajectories', item, error)
   }
@@ -74,7 +82,16 @@ export async function loadTrajectories(item: QuestionIndexItem, manifest: Manife
 export async function loadQuestionProcess(item: QuestionIndexItem, manifest: Manifest) {
   if (item.split !== 'eval') return { eventId: item.id, notebooks: [], tools: [] } satisfies QuestionProcessDetail
   try {
-    return await getJson<QuestionProcessDetail>(`${webAssetBase(manifest)}details/${encodeURIComponent(item.id)}.json`)
+    const [detail, runs] = await Promise.all([
+      getJson<QuestionProcessDetail>(`${webAssetBase(manifest)}details/${encodeURIComponent(item.id)}.json`),
+      loadRunSummaries(),
+    ])
+    const publishedRuns = new Set(runs.map((run) => run.id))
+    return {
+      ...detail,
+      notebooks: detail.notebooks.filter((row) => publishedRuns.has(row.runId)),
+      tools: detail.tools.filter((row) => publishedRuns.has(row.runId)),
+    }
   } catch (error) {
     throw remoteError('notebook and tool records', item, error)
   }

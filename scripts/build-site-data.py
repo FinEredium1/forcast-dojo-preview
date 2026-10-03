@@ -122,10 +122,7 @@ def model_arm(run_id: str) -> str:
 def model_label(run: dict[str, Any], paper_headlines: dict[tuple[str, str], dict[str, Any]]) -> str:
     headline = paper_headlines.get((model_arm(run["run_id"]), run["mode"]))
     if headline:
-        label = str(headline["label"]).replace(" +recency", "").strip()
-        if run["retrieval"] != "baseline" and "recency" not in label.lower():
-            label += " · Recency"
-        return label
+        return str(headline["label"]).strip()
     return str(run["model_name"])
 
 
@@ -238,6 +235,7 @@ def write_detail_fragments(
     parts_root: pathlib.Path,
     kind: str,
     transform,
+    published_run_ids: set[str],
     progress_every: int = 100_000,
 ) -> tuple[int, set[tuple[str, str, int, int, str]]]:
     count = 0
@@ -246,6 +244,8 @@ def write_detail_fragments(
     for batch in parquet.iter_batches(batch_size=10_000, columns=columns):
         grouped: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
         for raw in batch.to_pylist():
+            if str(raw["run_id"]) not in published_run_ids:
+                continue
             event_id = str(raw["event_id"])
             grouped[event_id].append(transform(raw))
             if kind == "notebooks":
@@ -305,7 +305,6 @@ def trajectory_row(
         "sourceRelease": row["source_release"],
         "protocol": "Historical · one repeat" if row["source_release"] == "2026-08" else "Current · four repeats",
         "retrieval": row["retrieval"],
-        "recency": row["retrieval"] != "baseline",
         "mode": row["mode"],
         "eventId": str(row["event_id"]),
         "rolloutIndex": int(row["rollout_index"]),
@@ -380,36 +379,6 @@ def research_summary(
                 "finalAccuracy": row["final_step_right"],
             }
         )
-    recency = []
-    for row in paper.get("recency", {}).get("per_arm", []):
-        baseline = summaries_by_arm_mode.get((row["base"], row["mode"]))
-        recency_run = next(
-            (
-                summary
-                for (arm, mode), summary in summaries_by_arm_mode.items()
-                if mode == row["mode"] and arm.startswith(f"{row['base']}-") and summary["retrieval"] != "baseline"
-            ),
-            None,
-        )
-        identity = recency_run or baseline
-        if not identity:
-            continue
-        recency.append(
-            {
-                "modelName": identity["modelName"].replace(" · Recency", ""),
-                "sourceType": identity["sourceType"],
-                "mode": row["mode"],
-                "nMatched": row.get("n_steps", 0),
-                "brierDifference": row["d_brier"],
-                "accuracyDifference": row["d_acc"],
-                "infoAlphaDifference": row["d_alpha"],
-                "intervals": {
-                    "brierDifference": {"lower": row["d_brier_lo"], "upper": row["d_brier_hi"]},
-                    "accuracyDifference": {"lower": row["d_acc_lo"], "upper": row["d_acc_hi"]},
-                    "infoAlphaDifference": {"lower": row["d_alpha_lo"], "upper": row["d_alpha_hi"]},
-                },
-            }
-        )
     murphy = []
     for row in paper.get("headline", []):
         run = summaries_by_arm_mode.get((row["arm"], row["mode"]))
@@ -441,7 +410,7 @@ def research_summary(
                 },
             }
         )
-    return {"consistency": consistency, "dynamics": dynamics, "recency": recency, "murphy": murphy}
+    return {"consistency": consistency, "dynamics": dynamics, "murphy": murphy}
 
 
 def build(args: argparse.Namespace) -> None:
@@ -479,8 +448,11 @@ def build(args: argparse.Namespace) -> None:
     questions = pq.read_table(required["questions_train"]).to_pylist() + pq.read_table(required["questions_eval"]).to_pylist()
     question_by_id = {str(row["event_id"]): row for row in questions}
     evaluation_ids = {event_id for event_id, row in question_by_id.items() if row["split"] == "eval"}
-    runs = pq.read_table(required["runs"]).to_pylist()
+    runs = [row for row in pq.read_table(required["runs"]).to_pylist() if row["retrieval"] == "baseline"]
     run_by_id = {str(row["run_id"]): row for row in runs}
+    published_run_ids = set(run_by_id)
+    published_conditions = {(model_arm(run_id), run["mode"]) for run_id, run in run_by_id.items()}
+    paper["headline"] = [row for row in paper["headline"] if (row["arm"], row["mode"]) in published_conditions]
     display_by_run = {run_id: model_label(run, paper_headlines) for run_id, run in run_by_id.items()}
 
     print("Staging full notebook records…", flush=True)
@@ -490,7 +462,7 @@ def build(args: argparse.Namespace) -> None:
         "block_count", "source_format_ok", "json_valid",
     ]
     notebook_count, notebook_keys = write_detail_fragments(
-        required["notebooks"], notebook_columns, parts_root, "notebooks", detail_notebook_row
+        required["notebooks"], notebook_columns, parts_root, "notebooks", detail_notebook_row, published_run_ids
     )
 
     print("Staging detailed tool records…", flush=True)
@@ -500,7 +472,7 @@ def build(args: argparse.Namespace) -> None:
         "calls", "successes", "errors", "parse_errors", "latency_seconds",
     ]
     tool_count, _ = write_detail_fragments(
-        required["tools"], tool_columns, parts_root, "tools", detail_tool_row
+        required["tools"], tool_columns, parts_root, "tools", detail_tool_row, published_run_ids
     )
     per_run_tools = tool_totals(required["tools"])
 
@@ -514,7 +486,7 @@ def build(args: argparse.Namespace) -> None:
         "model_latency_seconds", "input_tokens", "output_tokens", "cache_read_input_tokens",
         "cache_hit_rate", "usd_total", "format_notebook_ok",
     ]
-    forecast_rows = pq.read_table(required["forecasts"], columns=forecast_columns).to_pylist()
+    forecast_rows = [row for row in pq.read_table(required["forecasts"], columns=forecast_columns).to_pylist() if str(row["run_id"]) in published_run_ids]
     rows_by_run: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     rows_by_event: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     overall: dict[str, Aggregate] = collections.defaultdict(Aggregate)
@@ -554,7 +526,6 @@ def build(args: argparse.Namespace) -> None:
                 "sourceRelease": run["source_release"],
                 "protocol": "Historical · one repeat" if run["source_release"] == "2026-08" else "Current · four repeats",
                 "retrieval": run["retrieval"],
-                "recency": run["retrieval"] != "baseline",
                 "mode": run["mode"],
                 "file": pathlib.Path(str(run["source_file"])).name,
                 "rolloutCount": int(run["rollout_count"]),
@@ -634,7 +605,7 @@ def build(args: argparse.Namespace) -> None:
             legacy_paired = read_json(legacy_analysis_path).get("pairedModes", [])
         except (OSError, ValueError, json.JSONDecodeError):
             legacy_paired = []
-    paired_modes = [row for row in legacy_paired if row.get("sequentialRunId") in summary_by_id]
+    paired_modes = [row for row in legacy_paired if row.get("sequentialRunId") in summary_by_id and row.get("independentRunId") in summary_by_id]
     for row in paper.get("memory", []):
         independent = summaries_by_arm_mode.get((row["arm"], "independent"))
         sequential = summaries_by_arm_mode.get((row["arm"], "sequential"))

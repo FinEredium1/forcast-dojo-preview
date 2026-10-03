@@ -17,7 +17,7 @@ month.
 | Hugging Face `web/details/` | Full published notebooks and per-tool success/error/latency rows | Loaded only after the visitor requests full process records |
 | Hugging Face `data/` | Authoritative Parquet tables | Download and reproducibility |
 
-The 20M+ article CC-News corpus, retrieval indexes, search queries, raw model
+The 18.8M article CC-News corpus, retrieval indexes, search queries, raw model
 responses, credentials, and infrastructure configuration are not part of the
 website bundle.
 
@@ -37,6 +37,16 @@ terminal.
 The Overview, Results, Method, and question index use local files. Evaluation
 question trajectories require the generated `web/` assets to be present in the
 public Hugging Face dataset.
+
+## Paper overview figure
+
+`public/figures/forecast-dojo-figure-1.webp` reproduces Figure 1 from
+[the September 2026 paper](https://arxiv.org/pdf/2609.28876v1#page=3).
+It was extracted from the figure's PDF form object and rendered at 2800 × 1989
+pixels, then encoded as lossless WebP. Its labels and counts follow the paper;
+the result charts and header comparison use the site's published release data.
+The overview places the figure after Brier and Accuracy, with an enlarged,
+keyboard-accessible view. Its main call to action opens the paper.
 
 ## Build a cumulative monthly update
 
@@ -61,6 +71,13 @@ The exporter validates required inputs, derives checkpoint indices from the
 canonical dataset, keeps all historical and current runs in one summary, and
 bootstraps metric intervals by question. It cleans only the dedicated
 `.hf_web_staging` output directory.
+
+The site publishes baseline research runs in two modes: **memory-free**, where
+each forecast step starts fresh, and **memory-on**, where the previous belief
+notebook is carried to the next forecast date. The notebook icon beside each
+Overview chart heading switches between these modes. The exporter applies the
+same published-run selection to summaries, trajectories, and process records;
+the browser also limits older remote assets to the runs in the local summary.
 
 ## Upload the generated Hugging Face web assets
 

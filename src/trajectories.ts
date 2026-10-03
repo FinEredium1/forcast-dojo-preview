@@ -24,7 +24,7 @@ export function averageRepeats(rows: TrajectoryRow[]): TrajectoryRow[] {
     const crowd = group.find(r => r.crowdProbability != null)?.crowdProbability ?? null
     return {
       runId: first.runId, modelName: first.modelName, baseModel: first.baseModel, sourceType: first.sourceType,
-      recency: first.recency, mode: first.mode, eventId: first.eventId, rolloutIndex: -1,
+      mode: first.mode, eventId: first.eventId, rolloutIndex: -1,
       stepIndex: first.stepIndex, forecastDate: first.forecastDate, resolvedLabel: first.resolvedLabel,
       forecast: answered.length ? forecast : null, truthProbability: answered.length ? truth : null,
       brier: answered.length ? 1 - 2 * truth + Object.values(forecast).reduce((sum, p) => sum + p * p, 0) : null,
