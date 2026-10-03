@@ -20,6 +20,7 @@ from typing import Any, Iterable
 
 import pyarrow.parquet as pq
 from paper_analysis import score_row, paired_modes as recompute_pairs, research_summary as recompute_research
+from paper_figures import paper_figures_summary
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -571,6 +572,7 @@ def build(args: argparse.Namespace) -> None:
         "runs": run_analysis,
         "pairedModes": paired_modes,
         "research": recompute_research(rows_by_run, summaries, question_by_id, confidence_interval),
+        "paperFigures": paper_figures_summary(rows_by_run, summaries, question_by_id),
     }
 
     # Full multi-option market vectors are not included in the source archive.
@@ -585,7 +587,7 @@ def build(args: argparse.Namespace) -> None:
     web_base = f"https://huggingface.co/datasets/{args.hf_repo}/resolve/{args.hf_revision}/web/{snapshot}/"
     manifest = {
         "version": snapshot,
-        "label": "September 2026 update",
+        "label": "October 2026 update",
         "generatedAt": dataset_manifest["generated_at"],
         "questionCount": len(questions),
         "checkpointCount": checkpoint_count,

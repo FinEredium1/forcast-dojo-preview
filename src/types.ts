@@ -214,10 +214,68 @@ export interface AnalysisSummary {
   }
   runs: RunAnalysis[]
   pairedModes: PairedModeComparison[]
+  paperFigures?: PaperFiguresSummary
   research?: {
     consistency: ConsistencySummary[]
     dynamics: DynamicsSummary[]
     murphy?: MurphySummary[]
+  }
+}
+
+export interface ForecastStageSeries {
+  id: 'no-tools' | 'memory-free' | 'memory-on'
+  label: string
+  nModels: number
+  nEvents: number
+  points: Array<{
+    stage: string
+    brier: number
+    interval: { lower: number; upper: number }
+    modelRange: { lower: number; upper: number }
+    nForecasts: number
+  }>
+}
+
+export interface PaperFiguresSummary {
+  forecastStages: {
+    sourceUrl: string
+    aggregation: string
+    bootstrapSamples: number
+    series: ForecastStageSeries[]
+  }
+  memoryCost: {
+    sourceUrl: string
+    medianReduction: number
+    qualityImprovedModels: number
+    qualityModelCount: number
+    pairs: Array<{
+      modelName: string
+      memoryFree: number
+      memoryOn: number
+      reduction: number
+      recordedFree: number
+      recordedOn: number
+    }>
+  }
+  training: {
+    source: string
+    sourceUrl: string
+    modelName: string
+    nEvents: number
+    nForecasts: number
+    trainingEvents: number
+    trainingSteps: number
+    baseToolCalls: number
+    sftToolCalls: number
+    metrics: Array<{
+      id: 'brier' | 'accuracy'
+      label: string
+      direction: 'lower' | 'higher'
+      base: number
+      sft: number
+      pairedDifference: number
+      interval: { lower: number; upper: number }
+    }>
   }
 }
 

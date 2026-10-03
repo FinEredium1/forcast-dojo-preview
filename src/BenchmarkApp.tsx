@@ -10,7 +10,8 @@ import openAiLogo from '@lobehub/icons-static-svg/icons/openai.svg'
 import xAiLogo from '@lobehub/icons-static-svg/icons/xai.svg'
 import zaiLogo from '@lobehub/icons-static-svg/icons/zai.svg'
 import { attachQuestionProcess, loadAnalysis, loadManifest, loadQuestion, loadQuestionIndex, loadQuestionProcess, loadRunSummaries, loadTrajectories } from './data'
-import type { AnalysisSummary, BreakdownAggregate, ConsistencySummary, DynamicsSummary, ForecastMode, Manifest, MurphySummary, PairedModeComparison, QuestionDetail, QuestionIndexItem, RunAnalysis, RunSummary, SourceType, TrajectoryRow } from './types'
+import type { AnalysisSummary, BreakdownAggregate, ConsistencySummary, ForecastMode, Manifest, MurphySummary, PairedModeComparison, QuestionDetail, QuestionIndexItem, RunAnalysis, RunSummary, SourceType, TrajectoryRow } from './types'
+import { ForecastStagesFigure, MemoryCostFigure, TrainingFigure } from './PaperFigures'
 
 import { averageRepeats } from './trajectories'
 
@@ -304,7 +305,6 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
   const analysisRunIds = runs.map((run) => run.id)
   const pairedModeRunIds = pairedModes.flatMap((row) => [row.independentRunId, row.sequentialRunId])
   const consistencyRunIds = analysis?.research?.consistency.map((row) => row.runId) ?? []
-  const dynamicsRunIds = analysis?.research?.dynamics.map((row) => row.runId) ?? []
 
   return (
     <div className="analysis-page">
@@ -313,6 +313,11 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
       </ModelFilteredAnalysisSection> : null}
 
       <ConditionComparison runs={allRuns} />
+
+      {analysis?.paperFigures ? <>
+        <ForecastStagesFigure data={analysis.paperFigures.forecastStages} />
+        <TrainingFigure data={analysis.paperFigures.training} />
+      </> : null}
 
       {analysis ? <ModelFilteredAnalysisSection chartId="results-horizon" eyebrow="Resolution period" title="Accuracy as resolution approaches" description="Run accuracy at five pre-resolution horizons, keeping every model and forecasting mode distinct." note="Forecasts after the recorded close date are excluded from horizon analysis." runs={runs} eligibleRunIds={analysisRunIds}>
         {({ visibleRunIds }) => <BreakdownMatrix runs={analysis.runs} visibleRunIds={visibleRunIds} keys={analysis.horizonBuckets} field="byHorizon" metric="accuracy" />}
@@ -325,6 +330,8 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
       {pairedModes.length ? <ModelFilteredAnalysisSection chartId="results-memory" eyebrow="Forecast memory" title="Does a belief notebook help?" description="Memory-on and memory-free runs are matched at the same question, forecast date and repeat before their differences are calculated." note="Differences are Memory-on minus Memory-free; negative Brier differences are favorable." runs={runs} eligibleRunIds={pairedModeRunIds} modeControl="compare">
         {({ visibleGroupIds }) => <PairedModeChart comparisons={pairedModes} visibleGroupIds={visibleGroupIds} />}
       </ModelFilteredAnalysisSection> : null}
+
+      {analysis?.paperFigures ? <MemoryCostFigure data={analysis.paperFigures.memoryCost} /> : null}
 
       {analysis?.research?.consistency.length ? <ModelFilteredAnalysisSection chartId="results-consistency" eyebrow="Repeat reliability" title="Do repeated forecasts agree?" description="Four repeated forecasts expose run-to-run disagreement and show whether averaging the distributions improves Brier score." note="Brier improvement is Single-repeat Brier minus Averaged-forecast Brier; larger positive values favor averaging." runs={runs} eligibleRunIds={consistencyRunIds}>
         {({ visibleRunIds }) => <ConsistencyChart rows={analysis.research!.consistency} visibleRunIds={visibleRunIds} />}
@@ -344,10 +351,6 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
 
       {hasLatency ? <ModelFilteredAnalysisSection chartId="results-latency" eyebrow="Execution profile" title="Model processing time per checkpoint" description="Average accumulated model-call latency required to complete one forecast checkpoint." note="Tool latency is tracked separately and is not included here" runs={runs} eligibleRunIds={runIdsWithMetric(runs, 'avgModelLatencySeconds')}>
         {({ visibleRunIds }) => <GroupedRunChart runs={runs} visibleRunIds={visibleRunIds} metric="avgModelLatencySeconds" format="duration" minValue={0} />}
-      </ModelFilteredAnalysisSection> : null}
-
-      {analysis?.research?.dynamics.length ? <ModelFilteredAnalysisSection chartId="results-dynamics" eyebrow="Forecast evolution" title="Do forecasts improve over an episode?" description="Compare Brier at the first and last scheduled forecast dates." note="Repeats are averaged within each question, then questions receive equal weight. Only recorded endpoint pairs contribute." runs={runs} eligibleRunIds={dynamicsRunIds}>
-        {({ visibleRunIds }) => <DynamicsChart rows={analysis.research!.dynamics} visibleRunIds={visibleRunIds} />}
       </ModelFilteredAnalysisSection> : null}
 
       <section className="mode-note section-rule" id="evaluation-notes">
@@ -729,29 +732,6 @@ function ConsistencyChart({ rows, visibleRunIds }: { rows: ConsistencySummary[];
         </article>
       })}
       <figcaption>Positive bars indicate that averaging the four available probability distributions lowered Brier score.</figcaption>
-    </figure>
-  )
-}
-
-function DynamicsChart({ rows, visibleRunIds }: { rows: DynamicsSummary[]; visibleRunIds?: string[] }) {
-  const runOrder = visibleRunIds ? new Map(visibleRunIds.map((id, index) => [id, index])) : null
-  const ordered = [...rows]
-    .filter((row) => !runOrder || runOrder.has(row.runId))
-    .sort((a, b) => runOrder
-      ? (runOrder.get(a.runId) ?? Number.MAX_SAFE_INTEGER) - (runOrder.get(b.runId) ?? Number.MAX_SAFE_INTEGER)
-      : b.improvement - a.improvement)
-  const scale = Math.max(0.001, ...rows.flatMap((row) => [Math.abs(row.improvement), Math.abs(row.interval.lower ?? 0), Math.abs(row.interval.upper ?? 0)]))
-  return (
-    <figure className="research-list-chart">
-      {ordered.map((row) => {
-        const tooltip = `${row.modelName} · ${modeLabel(row.mode)} · first Brier ${row.firstBrier.toFixed(3)} · last Brier ${row.lastBrier.toFixed(3)} · improvement ${row.improvement.toFixed(3)}`
-        return <article className="research-chart-row" key={row.runId} role="img" aria-label={tooltip} tabIndex={0}>
-          <div className="research-chart-identity"><strong>{shortModelName(row.modelName)}</strong><span>{modeLabel(row.mode)} · {retrievalLabel(row.retrieval)}</span></div>
-          <EffectBar value={row.improvement} scale={scale} favorable={row.improvement > 0} />
-          <div className="research-chart-values"><strong>{signedDecimal(row.improvement)} improvement</strong><span>{row.firstBrier.toFixed(3)} → {row.lastBrier.toFixed(3)} · {number(row.nEpisodes)} questions</span></div>
-        </article>
-      })}
-      <figcaption>Positive bars indicate lower Brier at the last forecast date. Hover or focus each row for endpoint scores.</figcaption>
     </figure>
   )
 }
