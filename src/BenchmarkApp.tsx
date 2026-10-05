@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import alibabaLogo from '@lobehub/icons-static-svg/icons/alibaba-color.svg'
 import anthropicLogo from '@lobehub/icons-static-svg/icons/anthropic.svg'
@@ -177,10 +177,10 @@ function OverviewPage({ manifest, runs, analysis }: { manifest: Manifest; runs: 
       </section>
 
       <section className="highlight-section overview-results-stack section-rule" aria-label="Benchmark results">
-        <MemoryChartCard title="Brier score" formula="brier" accent="activity" className="accuracy-card">
+        <MemoryChartCard title="Brier score" accent="activity" className="accuracy-card">
           {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.brier} metric="brier" memoryEnabled={memoryEnabled} />}
         </MemoryChartCard>
-        <MemoryChartCard title="Accuracy" formula="accuracy" accent="quality" className="accuracy-card accuracy-metric-card">
+        <MemoryChartCard title="Accuracy" accent="quality" className="accuracy-card accuracy-metric-card">
           {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.accuracy} metric="accuracy" memoryEnabled={memoryEnabled} />}
         </MemoryChartCard>
       </section>
@@ -742,19 +742,11 @@ function DifferenceCell({ label, value, format, favorable, interval }: { label: 
   return <div className={`difference-cell${favorable ? ' favorable' : ''}`} role="img" tabIndex={0} aria-label={`${label} ${formatted}${interval ? `, 95% confidence interval ${format === 'points' ? `${signedPoints(interval.lower)} to ${signedPoints(interval.upper)}` : `${signedDecimal(interval.lower)} to ${signedDecimal(interval.upper)}`}` : ''}`}><span>{label}</span><strong>{formatted}</strong>{interval ? <small>95% CI {format === 'points' ? `${signedPoints(interval.lower)} to ${signedPoints(interval.upper)}` : `${signedDecimal(interval.lower)} to ${signedDecimal(interval.upper)}`}</small> : null}</div>
 }
 
-type MetricFormulaKind = Metric | 'murphy'
+type MetricFormulaKind = 'infoAlpha' | 'murphy'
 
 type BarTooltip = { runId: string; condition: string; value: string; coverage: string; x: number; y: number; above: boolean }
 
 const metricFormulas: Record<MetricFormulaKind, { label: string; math: string }> = {
-  accuracy: {
-    label: 'Accuracy: mean credit for the resolved outcome among top-probability outcomes. T is the set of most probable outcomes; ties split credit.',
-    math: '<mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mi>i</mi></munder><mfrac><mrow><mn>𝟙</mn><mo>[</mo><msub><mi>y</mi><mi>i</mi></msub><mo>∈</mo><msub><mi>T</mi><mi>i</mi></msub><mo>]</mo></mrow><mrow><mo>|</mo><msub><mi>T</mi><mi>i</mi></msub><mo>|</mo></mrow></mfrac>',
-  },
-  brier: {
-    label: 'Brier score: mean sum of squared differences between forecast probabilities and the resolved outcome.',
-    math: '<mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mi>i</mi></munder><munder><mo>∑</mo><mi>k</mi></munder><msup><mrow><mo>(</mo><msub><mi>p</mi><mrow><mi>i</mi><mi>k</mi></mrow></msub><mo>−</mo><mn>𝟙</mn><mo>[</mo><msub><mi>y</mi><mi>i</mi></msub><mo>=</mo><mi>k</mi><mo>]</mo><mo>)</mo></mrow><mn>2</mn></msup>',
-  },
   infoAlpha: {
     label: 'Information alpha: mean log ratio of agent to market probability for the resolved outcome. Epsilon is the probability floor, 0.001.',
     math: '<mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mi>i</mi></munder><mi mathvariant="normal">log</mi><mfrac><mrow><mi mathvariant="normal">max</mi><mo>(</mo><msub><mi>p</mi><mi>i</mi></msub><mo>(</mo><msub><mi>y</mi><mi>i</mi></msub><mo>)</mo><mo>,</mo><mi>ε</mi><mo>)</mo></mrow><mrow><mi mathvariant="normal">max</mi><mo>(</mo><msub><mi>m</mi><mi>i</mi></msub><mo>(</mo><msub><mi>y</mi><mi>i</mi></msub><mo>)</mo><mo>,</mo><mi>ε</mi><mo>)</mo></mrow></mfrac>',
@@ -770,13 +762,38 @@ function MetricFormula({ kind }: { kind: MetricFormulaKind }) {
   return <div className="metric-formula" role="img" aria-label={label} title={label}><span aria-hidden="true" dangerouslySetInnerHTML={{ __html: `<math xmlns="http://www.w3.org/1998/Math/MathML"><mrow>${math}</mrow></math>` }} /></div>
 }
 
+function InformationAlphaHelp() {
+  const tooltipId = useId()
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const [position, setPosition] = useState<{ left: number; top: number; width: number; above: boolean } | null>(null)
+  const show = useCallback(() => {
+    const bounds = buttonRef.current?.getBoundingClientRect()
+    if (!bounds) return
+    const viewportWidth = document.documentElement.clientWidth
+    const width = Math.min(320, viewportWidth - 32)
+    const above = window.innerHeight - bounds.bottom < 160 && bounds.top > 160
+    setPosition({ left: Math.max(16, Math.min(bounds.left, viewportWidth - width - 16)), top: above ? bounds.top - 8 : bounds.bottom + 8, width, above })
+  }, [])
+  const visible = position !== null
+  useEffect(() => {
+    if (!visible) return
+    window.addEventListener('scroll', show, true)
+    window.addEventListener('resize', show)
+    return () => { window.removeEventListener('scroll', show, true); window.removeEventListener('resize', show) }
+  }, [visible, show])
+  return <span className="metric-help" onMouseEnter={show} onMouseLeave={() => setPosition(null)}>
+    <button ref={buttonRef} type="button" aria-label="What is Information alpha?" aria-describedby={position ? tooltipId : undefined} onFocus={show} onBlur={() => setPosition(null)} onKeyDown={(event) => { if (event.key === 'Escape') setPosition(null) }}>?</button>
+    {position ? createPortal(<span id={tooltipId} role="tooltip" className={`metric-help-tooltip${position.above ? ' above' : ''}`} style={{ left: position.left, top: position.top, width: position.width }}>Compares how much probability the model and historical market gave the actual outcome. Positive values favor the model; negative values favor the market.</span>, document.body) : null}
+  </span>
+}
+
 function MemoryChartCard({ title, formula, accent, className = '', children }: { title: string; formula?: MetricFormulaKind; accent: 'quality' | 'activity' | 'tokens'; className?: string; children: (memoryEnabled: boolean) => React.ReactNode }) {
   const [memoryEnabled, setMemoryEnabled] = useState(false)
   const mode = memoryEnabled ? 'Memory-on' : 'Memory-free'
   return (
     <article className={`highlight-card ${accent} ${className}`.trim()}>
       <div className="highlight-card-header">
-        <div className="highlight-card-copy"><div className="highlight-card-heading"><span aria-hidden="true" /><h3>{title}</h3></div>{formula ? <MetricFormula kind={formula} /> : null}</div>
+        <div className="highlight-card-copy"><div className="highlight-card-heading"><span aria-hidden="true" /><h3>{title}{formula === 'infoAlpha' ? <InformationAlphaHelp /> : null}</h3></div>{formula ? <MetricFormula kind={formula} /> : null}</div>
         <button type="button" className={`memory-icon-control${memoryEnabled ? ' active' : ''}`} aria-label={`Belief notebook memory for ${title}`} aria-pressed={memoryEnabled} title={`${mode}. ${memoryEnabled ? 'Show memory-free forecasts' : 'Show memory-on forecasts with a carried belief notebook'}.`} onClick={() => setMemoryEnabled((enabled) => !enabled)}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path fill="#b49bdf" stroke="#7052b8" d="M12 5.5C12 2.5 8 1.6 6.6 4.2C4 4.2 2.5 6.3 3.2 8.7C1.8 10.7 2.8 13.5 4.8 14.1C4 16.6 5.8 19 8 18.8C9.3 21.1 12 20.4 12 18.1Z" />
@@ -1000,7 +1017,8 @@ function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { run
   const values = allGroups.flatMap((group) => group.runs.flatMap((run) => isFiniteNumber(run[metric]) ? [run[metric]] : []))
   const { domainMin, domainMax, axisTicks } = leaderboardDomain(metric, values, baseline)
   const position = (value: number) => Math.max(0, Math.min(100, ((value - domainMin) / (domainMax - domainMin)) * 100))
-  const canvasWidth = Math.max(420, visibleEntries.length * barWidth + (visibleEntries.length + 1) * 8 + 108)
+  const modelSlotWidth = Math.max(barWidth, Math.ceil(labelSize * 4.5), showBarValues ? (metric === 'infoAlpha' ? 72 : 60) : 0)
+  const canvasWidth = Math.max(420, visibleEntries.length * modelSlotWidth + (visibleEntries.length + 1) * 8 + 108)
   const controlName = `${metric}-chart-controls`
   const filterTitleId = `${metric}-filter-title`
   const displayTitleId = `${metric}-display-title`
@@ -1009,7 +1027,7 @@ function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { run
   }
 
   const revealBarTooltip = (element: HTMLDivElement, run: RunSummary) => {
-    const rect = (element.querySelector('.accuracy-vertical-bar') ?? element).getBoundingClientRect()
+    const rect = (element.querySelector('.accuracy-vertical-bar > strong') ?? element.querySelector('.accuracy-vertical-bar') ?? element).getBoundingClientRect()
     const anchorY = Math.max(12, rect.top)
     setBarTooltip({
       runId: run.id,
@@ -1119,7 +1137,7 @@ function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { run
               <div className="accuracy-control-heading"><strong id={displayTitleId}>Display</strong></div>
               <label className="accuracy-label-slider"><span>Bar thickness <output>{barWidth}px</output></span><input aria-label="Bar thickness" type="range" min="12" max="44" step="1" value={barWidth} onChange={(event) => setBarWidth(Number(event.target.value))} /></label>
               <label className="accuracy-label-slider"><span>Model label size <output>{labelSize}px</output></span><input aria-label="Model label size" type="range" min="14" max="28" step="1" value={labelSize} onChange={(event) => setLabelSize(Number(event.target.value))} /></label>
-              <AccuracyToggle label="Values on bars" checked={showBarValues} onChange={setShowBarValues} />
+              <AccuracyToggle label="Bar values" checked={showBarValues} onChange={setShowBarValues} />
               <AccuracyToggle label="Gridlines" checked={showGridlines} onChange={setShowGridlines} />
               <AccuracyToggle label="Crowd benchmark" checked={showCrowdLine} onChange={setShowCrowdLine} disabled={baseline == null} />
               <button className="accuracy-control-reset" type="button" onClick={resetDisplay}>Reset display</button>
@@ -1159,7 +1177,7 @@ function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { run
                         </div>
                       </div>
                       <ProviderMark provider={provider} />
-                      <div className="accuracy-model-label" title={group.modelName}><span>{compactLeaderboardName(group.modelName)}</span></div>
+                      <div className="accuracy-model-label" title={group.modelName} aria-label={group.modelName}>{leaderboardLabelLines(group.modelName).map((line, index) => <span key={index}>{line}</span>)}</div>
                     </article>
                   )
                 })}
@@ -2148,6 +2166,11 @@ function compactLeaderboardName(value: string) {
     .replace(' think', '')
     .replace('DeepSeek-V', 'DeepSeek V')
     .replace('Qwen3.5-397B', 'Qwen3.5 397B')
+}
+
+function leaderboardLabelLines(value: string) {
+  const [family, ...variant] = compactLeaderboardName(value).replace(/^(gpt-oss)-(.+)$/i, '$1 $2').split(' ')
+  return variant.length ? [family, variant.join(' ')] : [family]
 }
 
 function shortModelName(value: string) {
