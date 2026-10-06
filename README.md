@@ -47,9 +47,10 @@ It was extracted from the figure's PDF form object and rendered at 2800 × 1989
 pixels, then encoded as lossless WebP. Its labels and counts follow the paper;
 the result charts use the site's published release data.
 The overview places the figure beside the title, with an enlarged,
-keyboard-accessible view. Its main call to action opens the paper. A bottom
-scope strip reports the paper's event, forecast-step, model, memory-mode, and
-corpus counts. A compact study-design and memory-mode section follows it.
+keyboard-accessible view that fits the screen. Its main call to action opens
+the paper. Benchmark scope lists the paper's event, forecast-step, model,
+memory-mode, and corpus counts beside the study design, with a vertical divider
+on desktop and a stacked layout on smaller screens.
 
 Analysis opens with a domain ranking, including the published overall aggregate
 under All Domain. Clicking a run pins its metrics until another run is selected
@@ -98,8 +99,10 @@ This keeps the question library and remote trajectories on the same release.
 Overview and the domain, memory, and resource charts show the 24 research runs.
 Analysis also compares all three settings in a metric-selectable table. The
 question run selector includes all 36 conditions, with no-tools clearly labeled.
-Notebook formatting and the chart display defaults (34px bars, 17px model labels)
-are retained.
+Overview charts use 44px bars and horizontal 17px model labels. Model hover
+cards show the official name, metric value, and paper-verified reasoning effort;
+open-weight models also show size and architecture. Cost is a separate bar chart
+for the five priced proprietary models.
 
 To upload newly generated assets after review:
 
@@ -133,7 +136,8 @@ GitHub Pages never uploads to Hugging Face and requires no token in the frontend
   Mean disagreement is pairwise total variation; ensemble gain compares the
   individual mean Brier to the Brier of the averaged distribution.
 - Murphy is an exploratory pooled classwise decomposition with ten equal-width
-  bins, scaled per forecast. Tooltips report the finite-bin residual separately.
+  bins, scaled per forecast. Tooltips show reliability, resolution, uncertainty,
+  and the recorded Brier score; the help popover explains the approximation.
 - Full multi-option market vectors are absent from the source ZIP. Overview's
   contextual market references are the rounded Table 3 values (Brier 0.498,
   accuracy 64.5%), explicitly attributed in the legend tooltip. Market Murphy
