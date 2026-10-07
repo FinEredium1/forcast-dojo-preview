@@ -1,5 +1,10 @@
 import type { TrajectoryRow } from './types'
 
+export function probabilityForOutcome(row: TrajectoryRow, outcome: string): number | null {
+  if (row.forecast) return row.forecast[outcome] ?? 0
+  return outcome === row.resolvedLabel ? row.truthProbability : null
+}
+
 export function averageRepeats(rows: TrajectoryRow[]): TrajectoryRow[] {
   const dates = new Map<string, TrajectoryRow[]>()
   for (const row of rows) {

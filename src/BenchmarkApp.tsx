@@ -14,7 +14,7 @@ import type { AnalysisSummary, BreakdownAggregate, ConsistencySummary, ForecastM
 import { ForecastStagesFigure, MemoryCostFigure } from './PaperFigures'
 import { modelMetadataFor } from './modelMetadata'
 
-import { averageRepeats } from './trajectories'
+import { averageRepeats, probabilityForOutcome } from './trajectories'
 
 type CommonData = {
   manifest: Manifest | null
@@ -413,6 +413,7 @@ function QuestionDetailPage({ item, questions, browseState, manifest, runSummari
   const [processState, setProcessState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
   const [processError, setProcessError] = useState<string | null>(null)
   const [runId, setRunId] = useState('')
+  const [selectedOutcome, setSelectedOutcome] = useState('')
 
   useEffect(() => {
     setDetail(null)
@@ -423,6 +424,7 @@ function QuestionDetailPage({ item, questions, browseState, manifest, runSummari
     setProcessState('idle')
     setProcessError(null)
     setRunId('')
+    setSelectedOutcome('')
     loadQuestion(item)
       .then(setDetail)
       .catch((loadError: unknown) => setError(loadError instanceof Error ? loadError.message : 'Unable to load this question.'))
@@ -471,6 +473,8 @@ function QuestionDetailPage({ item, questions, browseState, manifest, runSummari
   const availableRepeats = selectedRun ? [...new Set(selectedRun.rows.map((row) => row.rolloutIndex))].sort((a, b) => a - b) : []
   const repeatCount = availableRepeats.length
   const selected = selectedRun ? { ...selectedRun, rows: averageRepeats(selectedRun.rows) } : null
+  const outcome = detail.options.includes(selectedOutcome) ? selectedOutcome : detail.resolvedLabel
+  const latestForecast = selected?.rows.at(-1)
   const filteredQuestions = filterQuestionIndex(questions, browseState)
   const filteredPosition = filteredQuestions.findIndex((question) => question.id === item.id)
   const sequenceState = filteredPosition >= 0 ? browseState : { query: '', domain: 'all', split: 'all', belief: 'all', page: 1, perPage: browseState.perPage }
@@ -510,10 +514,10 @@ function QuestionDetailPage({ item, questions, browseState, manifest, runSummari
         <h1>{detail.title}</h1>
       </section>
 
-      <section className="detail-layout section-rule">
+      <section className={`detail-layout section-rule${detail.options.length >= 6 ? ' many-outcomes' : ''}`}>
         <div className="trajectory-panel">
           <div className="trajectory-head">
-            <div><p className="eyebrow">Forecast trajectory</p><h2>Probability of the resolved outcome</h2></div>
+            <div><p className="eyebrow">Forecast trajectory</p><h2>Probability by outcome</h2></div>
             {runGroups.length ? (
               <label className="select-field run-select">
                 <span>Model run</span>
@@ -530,7 +534,7 @@ function QuestionDetailPage({ item, questions, browseState, manifest, runSummari
               <p className="run-context"><span>{sourceLabel(selected.first.sourceType)}</span><span>{modeLabel(selected.first.mode)}</span><span>{retrievalLabel(selected.first.retrieval)}</span><span>{selected.first.protocol ?? 'Published run'}</span></p>
               <p className="repeat-note">{repeatCount > 1 ? `Average of ${repeatCount} published repeats. Probabilities and scores are averaged across recorded repeats. Unusable reports use the paper’s uniform fallback.` : 'Single published repeat; no cross-repeat averaging is available.'}</p>
               {!selected.rows.length ? <p className="empty-state">No forecast records are available for this model run.</p> : null}
-              <ProbabilityTrajectoryChart rows={selected.rows} fallbackDates={detail.forecastDates} outcome={detail.resolvedLabel} />
+              <ProbabilityTrajectoryChart rows={selected.rows} fallbackDates={detail.forecastDates} outcome={outcome} resolvedOutcome={detail.resolvedLabel} options={detail.options} onOutcomeChange={setSelectedOutcome} />
             </>
           ) : !trajectoryLoading && !trajectoryError ? <div className="empty-state"><h3>No evaluation model results for this question.</h3><p>{item.split === 'train' ? 'This is a training-set question; published model evaluations currently use the evaluation split.' : 'No forecast rows were recorded for this evaluation question.'}</p></div> : null}
         </div>
@@ -538,7 +542,15 @@ function QuestionDetailPage({ item, questions, browseState, manifest, runSummari
         <aside className="question-context">
           <p className="eyebrow">Question record</p>
           {detail.body ? <details><summary>Full resolution criteria</summary><p>{detail.body}</p></details> : <p>No additional resolution criteria were published.</p>}
-          {detail.options.length ? <div className="option-block"><h3>Outcomes</h3><div className="tag-list">{detail.options.map((option) => <span key={option} className={option === detail.resolvedLabel ? 'resolved' : ''}>{option}</span>)}</div></div> : null}
+          {detail.options.length ? (
+            <div className={`option-block ${latestForecast ? 'selectable-outcomes' : ''}`}>
+              <h3>Outcomes</h3>
+              {latestForecast ? <p className="outcome-select-note">Latest model forecast · {compactDate(latestForecast.forecastDate)}<br />Select an outcome to view its history.</p> : null}
+              {latestForecast ? <OutcomeOptions key={detail.id} options={detail.options} resolvedOutcome={detail.resolvedLabel} outcome={outcome} forecast={latestForecast} onOutcomeChange={setSelectedOutcome} /> : (
+                <div className="tag-list">{detail.options.map((option) => <span key={option} className={option === detail.resolvedLabel ? 'resolved' : ''}>{option}</span>)}</div>
+              )}
+            </div>
+          ) : null}
           <dl className="metadata-list">
             <div><dt>Resolved outcome</dt><dd>{detail.resolvedLabel || '—'}</dd></div>
             <div><dt>Forecast checkpoints</dt><dd>{number(detail.checkpointCount)}</dd></div>
@@ -549,9 +561,44 @@ function QuestionDetailPage({ item, questions, browseState, manifest, runSummari
             <div><dt>Close</dt><dd>{shortDate(detail.closeDate)}</dd></div>
           </dl>
         </aside>
-        {selected?.rows.length ? <ForecastCheckpoints rows={selected.rows} fallbackDates={detail.forecastDates} /> : null}
+        {selected?.rows.length ? <ForecastCheckpoints rows={selected.rows} fallbackDates={detail.forecastDates} outcome={outcome} resolvedOutcome={detail.resolvedLabel} /> : null}
       </section>
       {selectedRun && selectedRun.rows.some(hasCheckpointTelemetry) ? <CheckpointActivity key={selectedRun.id} rows={selectedRun.rows} fallbackDates={detail.forecastDates} processState={processState} processError={processError} onLoadProcess={loadProcess} datasetUrl={manifest.huggingFace?.datasetUrl} /> : null}
+    </div>
+  )
+}
+
+function OutcomeOptions({ options, resolvedOutcome, outcome, forecast, onOutcomeChange }: { options: string[]; resolvedOutcome: string; outcome: string; forecast: TrajectoryRow; onOutcomeChange: (outcome: string) => void }) {
+  const listRef = useRef<HTMLDivElement>(null)
+  const [visibleHeight, setVisibleHeight] = useState<number | null>(null)
+
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || options.length < 6) return
+    const visibleOptions = [...list.children].slice(0, 5) as HTMLElement[]
+    const measure = () => {
+      const first = visibleOptions[0].getBoundingClientRect()
+      const last = visibleOptions[4].getBoundingClientRect()
+      if (!first.height || !last.height) return
+      const styles = getComputedStyle(list)
+      const height = last.bottom - first.top + parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom)
+      setVisibleHeight((current) => current !== null && Math.abs(current - height) < .5 ? current : height)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(list)
+    visibleOptions.forEach((option) => observer.observe(option))
+    return () => observer.disconnect()
+  }, [options])
+
+  return (
+    <div ref={listRef} className="outcome-options" style={options.length >= 6 && visibleHeight !== null ? { maxHeight: visibleHeight } : undefined}>
+      {options.map((option) => (
+        <button key={option} type="button" className={`outcome-option ${option === resolvedOutcome ? 'resolved' : ''}`} aria-pressed={option === outcome} onClick={() => onOutcomeChange(option)}>
+          <span>{option}{option === resolvedOutcome ? <span className="outcome-resolved-mark" aria-label="Resolved outcome">✓</span> : null}</span>
+          <strong>{percent(probabilityForOutcome(forecast, option))}</strong>
+        </button>
+      ))}
     </div>
   )
 }
@@ -1922,56 +1969,108 @@ function Pagination({ page, count, onChange }: { page: number; count: number; on
   return <nav className="pagination" aria-label="Question pages"><button type="button" disabled={page === 1} onClick={() => onChange(page - 1)}>← Previous</button><span>{page} / {count}</span><button type="button" disabled={page === count} onClick={() => onChange(page + 1)}>Next →</button></nav>
 }
 
-function ProbabilityTrajectoryChart({ rows, fallbackDates, outcome }: { rows: TrajectoryRow[]; fallbackDates: string[]; outcome: string }) {
+function ProbabilityTrajectoryChart({ rows, fallbackDates, outcome, resolvedOutcome, options, onOutcomeChange }: { rows: TrajectoryRow[]; fallbackDates: string[]; outcome: string; resolvedOutcome: string; options: string[]; onOutcomeChange: (outcome: string) => void }) {
   const points = [...rows].sort((a, b) => a.stepIndex - b.stepIndex)
-  if (!points.some(row => row.truthProbability != null || row.crowdProbability != null)) return null
+  const showCrowd = outcome === resolvedOutcome
+  const probabilities = points.flatMap(point => [probabilityForOutcome(point, outcome), showCrowd ? point.crowdProbability : null]).filter(isFiniteNumber)
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [chartSize, setChartSize] = useState({ width: 720, height: 400 })
+  const [checkpointTooltip, setCheckpointTooltip] = useState<{ point: TrajectoryRow; anchor: TooltipAnchor } | null>(null)
+  const checkpointTooltipId = useId()
+  const hasData = probabilities.length > 0
+  useLayoutEffect(() => {
+    const element = svgRef.current
+    if (!element) return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      if (width <= 0 || height <= 0) return
+      setChartSize(current => Math.abs(current.width - width) < .5 && Math.abs(current.height - height) < .5 ? current : { width, height })
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [hasData])
+  useEffect(() => { setCheckpointTooltip(null) }, [outcome, rows[0]?.runId])
+  const tooltipVisible = checkpointTooltip !== null
+  useEffect(() => {
+    if (!tooltipVisible) return
+    const dismiss = () => setCheckpointTooltip(null)
+    window.addEventListener('scroll', dismiss, true)
+    window.addEventListener('resize', dismiss)
+    return () => {
+      window.removeEventListener('scroll', dismiss, true)
+      window.removeEventListener('resize', dismiss)
+    }
+  }, [tooltipVisible])
+  if (!hasData) return null
 
-  const width = 720
-  const height = 340
-  const margin = { top: 24, right: 22, bottom: 56, left: 54 }
+  const revealCheckpoint = (element: SVGElement, point: TrajectoryRow) => {
+    const bounds = element.getBoundingClientRect()
+    setCheckpointTooltip({ point, anchor: { x: bounds.left + bounds.width / 2, top: bounds.top, bottom: bounds.bottom } })
+  }
+
+  const rawMin = Math.min(...probabilities)
+  const rawMax = Math.max(...probabilities)
+  const span = Math.max(.02, rawMax - rawMin)
+  const midpoint = (rawMin + rawMax) / 2
+  const padding = span * .15
+  const lower = Math.max(0, midpoint - span / 2 - padding)
+  const upper = Math.min(1, midpoint + span / 2 + padding)
+  const step = niceAxisMaximum((upper - lower) / 5)
+  const domainMin = Math.max(0, Math.floor(lower / step) * step)
+  const domainMax = Math.min(1, Math.ceil(upper / step) * step)
+  const width = Math.max(280, chartSize.width)
+  const height = Math.max(260, chartSize.height)
+  const margin = { top: 24, right: 22, bottom: 56, left: 74 }
   const plotWidth = width - margin.left - margin.right
   const plotHeight = height - margin.top - margin.bottom
   const x = (index: number) => fallbackDates.length <= 1 ? margin.left + plotWidth / 2 : margin.left + (points[index].stepIndex / (fallbackDates.length - 1)) * plotWidth
-  const y = (value: number) => margin.top + (1 - Math.max(0, Math.min(1, value))) * plotHeight
-  const pathFor = (key: 'truthProbability' | 'crowdProbability') => {
+  const y = (value: number) => margin.top + (domainMax - Math.max(domainMin, Math.min(domainMax, value))) / (domainMax - domainMin) * plotHeight
+  const pathFor = (valueFor: (point: TrajectoryRow) => number | null) => {
     let path = ''
     let previousStep: number | null = null
     points.forEach((point, index) => {
-      const value = point[key]
+      const value = valueFor(point)
       if (value == null) { previousStep = null; return }
       path += `${previousStep === point.stepIndex - 1 ? ' L' : ' M'} ${x(index).toFixed(2)} ${y(value).toFixed(2)}`
       previousStep = point.stepIndex
     })
     return path
   }
-  const labelIndexes = points.length <= 5
+  const labelIndexes = points.length <= (width < 520 ? 3 : 5)
     ? points.map((_, index) => index)
     : [0, Math.floor((points.length - 1) / 2), points.length - 1]
-  const yTicks = [0, 0.25, 0.5, 0.75, 1]
+  const yTicks = linearTicks(domainMin, domainMax)
 
   return (
     <figure className="probability-chart">
+      <label className="select-field chart-outcome-select">
+        <span>Outcome</span>
+        <select value={outcome} onChange={(event) => onOutcomeChange(event.target.value)}>
+          {options.map((option) => <option key={option} value={option}>{option}{option === resolvedOutcome ? ' · Resolved' : ''}</option>)}
+        </select>
+      </label>
       <div className="chart-legend" aria-hidden="true">
         <span><i className="model" />Model</span>
-        <span><i className="crowd" />Market crowd</span>
+        {showCrowd ? <span><i className="crowd" />Market crowd</span> : null}
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Model and crowd probability assigned to ${outcome} across ${points.length} checkpoints`}>
+      <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${showCrowd ? 'Model and crowd' : 'Model'} probability assigned to ${outcome} across ${points.length} checkpoints`}>
         {yTicks.map((tick) => (
           <g key={tick} className="chart-gridline">
             <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} />
-            <text x={margin.left - 12} y={y(tick) + 5} textAnchor="end">{Math.round(tick * 100)}%</text>
+            <text x={margin.left - 12} y={y(tick) + 5} textAnchor="end">{Number((tick * 100).toFixed(2))}%</text>
           </g>
         ))}
         {points.map((point, index) => <line key={`checkpoint-${point.stepIndex}-${index}`} className="chart-checkpoint" x1={x(index)} x2={x(index)} y1={margin.top} y2={height - margin.bottom} />)}
-        <path className="chart-line crowd" d={pathFor('crowdProbability')} />
-        <path className="chart-line model" d={pathFor('truthProbability')} />
+        {showCrowd ? <path className="chart-line crowd" d={pathFor(point => point.crowdProbability)} /> : null}
+        <path className="chart-line model" d={pathFor(point => probabilityForOutcome(point, outcome))} />
         {points.map((point, index) => {
           const date = point.forecastDate ?? fallbackDates[point.stepIndex] ?? null
-          const tooltip = `Checkpoint ${point.stepIndex + 1} · ${shortDate(date)} · Model ${percent(point.truthProbability)} · Crowd ${percent(point.crowdProbability)}`
+          const modelProbability = probabilityForOutcome(point, outcome)
+          const tooltip = `Checkpoint ${point.stepIndex + 1} · ${shortDate(date)} · ${outcome} · Model ${percent(modelProbability)}${showCrowd ? ` · Crowd ${percent(point.crowdProbability)}` : ''}`
           return (
-            <g key={`points-${point.stepIndex}-${index}`}>
-              {point.crowdProbability != null ? <circle className="chart-point crowd" cx={x(index)} cy={y(point.crowdProbability)} r="5" tabIndex={0} aria-label={tooltip}><title>{tooltip}</title></circle> : null}
-              {point.truthProbability != null ? <circle className="chart-point model" cx={x(index)} cy={y(point.truthProbability)} r="5" tabIndex={0} aria-label={tooltip}><title>{tooltip}</title></circle> : null}
+            <g key={`points-${point.stepIndex}-${index}`} onMouseEnter={(event) => revealCheckpoint(event.target as SVGElement, point)} onMouseLeave={() => setCheckpointTooltip(null)} onFocus={(event) => revealCheckpoint(event.target as SVGElement, point)} onBlur={() => setCheckpointTooltip(null)} onClick={(event) => revealCheckpoint(event.target as SVGElement, point)} onKeyDown={(event) => { if (event.key === 'Escape') setCheckpointTooltip(null) }}>
+              {showCrowd && point.crowdProbability != null ? <circle className="chart-point crowd" cx={x(index)} cy={y(point.crowdProbability)} r="5" tabIndex={0} aria-label={tooltip} aria-describedby={checkpointTooltip?.point.stepIndex === point.stepIndex ? checkpointTooltipId : undefined} /> : null}
+              {modelProbability != null ? <circle className="chart-point model" cx={x(index)} cy={y(modelProbability)} r="5" tabIndex={0} aria-label={tooltip} aria-describedby={checkpointTooltip?.point.stepIndex === point.stepIndex ? checkpointTooltipId : undefined} /> : null}
             </g>
           )
         })}
@@ -1981,37 +2080,48 @@ function ProbabilityTrajectoryChart({ rows, fallbackDates, outcome }: { rows: Tr
           return <text key={`label-${point.stepIndex}-${index}`} className="chart-date" x={x(index)} y={height - 22} textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'}>t{point.stepIndex + 1} · {compactDate(date)}</text>
         })}
       </svg>
-      <figcaption>Probability assigned to the resolved outcome: <strong>{outcome}</strong>. Focus or hover over a point for exact values.</figcaption>
+      <figcaption>Probability assigned to {showCrowd ? 'the resolved outcome' : 'the selected outcome'}: <strong>{outcome}</strong>. {showCrowd ? 'Focus or hover over a point for exact values.' : 'Crowd probabilities are available only for the resolved outcome.'}</figcaption>
+      {checkpointTooltip ? <FloatingChartTooltip id={checkpointTooltipId} anchor={checkpointTooltip.anchor} className="model-metadata-tooltip checkpoint-tooltip">
+        <strong>Checkpoint {checkpointTooltip.point.stepIndex + 1} · {shortDate(checkpointTooltip.point.forecastDate ?? fallbackDates[checkpointTooltip.point.stepIndex] ?? null)}</strong>
+        <span className="model-metadata-line">{outcome}</span>
+        <dl className="checkpoint-tooltip-values">
+          <div><dt>Model</dt><dd>{percent(probabilityForOutcome(checkpointTooltip.point, outcome))}</dd></div>
+          {showCrowd ? <div><dt>Crowd</dt><dd>{percent(checkpointTooltip.point.crowdProbability)}</dd></div> : null}
+        </dl>
+      </FloatingChartTooltip> : null}
     </figure>
   )
 }
 
-function ForecastCheckpoints({ rows, fallbackDates }: { rows: TrajectoryRow[]; fallbackDates: string[] }) {
+function ForecastCheckpoints({ rows, fallbackDates, outcome, resolvedOutcome }: { rows: TrajectoryRow[]; fallbackDates: string[]; outcome: string; resolvedOutcome: string }) {
   const showCost = rows.some((row) => row.usdTotal != null)
+  const showCrowd = outcome === resolvedOutcome
   return (
-    <section className="checkpoint-forecasts" aria-labelledby="checkpoint-forecasts-title" style={{ '--checkpoint-score-columns': showCost ? 3 : 2, '--checkpoint-metric-columns': showCost ? 5 : 4 } as React.CSSProperties}>
+    <section className="checkpoint-forecasts" aria-labelledby="checkpoint-forecasts-title" style={{ '--checkpoint-score-columns': showCost ? 3 : 2, '--checkpoint-probability-columns': showCrowd ? 2 : 1, '--checkpoint-metric-columns': (showCost ? 5 : 4) - (showCrowd ? 0 : 1) } as React.CSSProperties}>
       <h3 id="checkpoint-forecasts-title">Forecast checkpoints</h3>
+      {!showCrowd ? <p className="checkpoint-outcome-note">Model probabilities for <strong>{outcome}</strong>. Brier and information alpha continue to score the forecast against the resolved outcome.</p> : null}
       <div className="trajectory-list" role="table" aria-label="Forecast probabilities and scores by checkpoint">
         <div className="trajectory-point trajectory-column-header" role="row">
           <span className="trajectory-checkpoint-header" role="columnheader">Checkpoint</span>
           <span className="trajectory-model-header" role="columnheader">Model</span>
-          <span className="trajectory-crowd-header" role="columnheader">Crowd</span>
-          <span role="columnheader">Brier</span>
-          <span role="columnheader">Information alpha</span>
-          {showCost ? <span role="columnheader">Recorded cost</span> : null}
+          {showCrowd ? <span className="trajectory-crowd-header" role="columnheader">Crowd</span> : null}
+          <span className="trajectory-score-header" role="columnheader">Brier</span>
+          <span className="trajectory-score-header" role="columnheader">Information alpha</span>
+          {showCost ? <span className="trajectory-score-header" role="columnheader">Recorded cost</span> : null}
         </div>
-        {rows.map((row, index) => <TrajectoryPoint key={`${row.runId}-${row.stepIndex}-${index}`} row={row} fallbackDate={fallbackDates[row.stepIndex]} showCost={showCost} />)}
+        {rows.map((row, index) => <TrajectoryPoint key={`${row.runId}-${row.stepIndex}-${index}`} row={row} fallbackDate={fallbackDates[row.stepIndex]} showCost={showCost} showCrowd={showCrowd} outcome={outcome} />)}
       </div>
     </section>
   )
 }
 
-function TrajectoryPoint({ row, fallbackDate, showCost }: { row: TrajectoryRow; fallbackDate?: string; showCost: boolean }) {
+function TrajectoryPoint({ row, fallbackDate, showCost, showCrowd, outcome }: { row: TrajectoryRow; fallbackDate?: string; showCost: boolean; showCrowd: boolean; outcome: string }) {
+  const modelProbability = probabilityForOutcome(row, outcome)
   return (
     <div className="trajectory-point" role="row">
       <div className="trajectory-date" role="rowheader"><span>t{row.stepIndex + 1}</span><strong>{shortDate(row.forecastDate ?? fallbackDate ?? null)}</strong></div>
-      <div role="cell" aria-label={`Model ${percent(row.truthProbability)}`}><ProbabilityBar value={row.truthProbability} tone="model" /></div>
-      <div role="cell" aria-label={`Crowd ${percent(row.crowdProbability)}`}><ProbabilityBar value={row.crowdProbability} tone="crowd" /></div>
+      <div role="cell" aria-label={`Model ${percent(modelProbability)}`}><ProbabilityBar value={modelProbability} tone="model" /></div>
+      {showCrowd ? <div role="cell" aria-label={`Crowd ${percent(row.crowdProbability)}`}><ProbabilityBar value={row.crowdProbability} tone="crowd" /></div> : null}
       <div className="point-score" role="cell"><strong>{formatMetric(row.brier, 'brier')}</strong></div>
       <div className="point-score" role="cell"><strong>{formatMetric(row.infoAlpha, 'infoAlpha')}</strong></div>
       {showCost ? <div className="point-score" role="cell"><strong>{row.usdTotal == null ? '—' : `$${row.usdTotal.toFixed(2)}`}</strong></div> : null}
