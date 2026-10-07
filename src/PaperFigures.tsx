@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { PaperFiguresSummary } from './types'
 
-const colors = { 'no-tools': '#857b70', 'memory-free': '#7052b8', 'memory-on': '#398774' }
+const colors = { 'no-tools': 'var(--accent-dark)', 'memory-free': 'var(--memory-free)', 'memory-on': 'var(--memory-on)' }
 const count = (value: number) => value.toLocaleString('en-US')
 const money = (value: number) => `$${value.toFixed(2)}`
 

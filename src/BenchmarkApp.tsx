@@ -34,6 +34,7 @@ type QuestionBrowseState = { query: string; domain: string; split: string; belie
 const QUESTION_PAGE_SIZE = 15
 const QUESTION_PAGE_SIZES = [15, 30, 50, 100]
 const PAPER_URL = 'https://arxiv.org/pdf/2609.28876v1'
+const PAPER_ABSTRACT_URL = 'https://arxiv.org/abs/2609.28876'
 // Paper v1: Table 2 and Sections 3, 4.2, and 5.1.
 const PAPER_SCOPE = {
   eventCount: 1338 + 230,
@@ -203,13 +204,32 @@ function OverviewPage({ manifest, runs, analysis }: { manifest: Manifest; runs: 
       </section>
 
       <OverviewStudyDesign manifest={manifest} />
-
+      <OverviewCitation />
     </>
   )
 }
 
 function Stat({ value, label }: { value: string; label: string }) {
   return <article><span className="stat-value">{value}</span><span className="stat-label">{label}</span></article>
+}
+
+function OverviewCitation() {
+  return (
+    <section className="overview-citation section-rule" aria-labelledby="citation-heading">
+      <h2 id="citation-heading">Citation</h2>
+      <pre className="citation-bibtex"><code>{`@misc{ye2026forecastdojoreplayableenvironmentsbenchmarking,
+  title={Forecast-Dojo: Replayable Environments for Benchmarking and Training LLM Forecasting Agents},
+  author={Liqin Ye and Haorui Wang and Fardin Ahmed and Rongzhi Zhang and Yuan He
+          and Ziyuan Lin and Yanbin Yin and Jing Peng and Michael Galarnyk
+          and Sudheer Chava and Chao Zhang},
+  year={2026},
+  eprint={2609.28876},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI},
+  url={`}<a href={PAPER_ABSTRACT_URL} target="_blank" rel="noopener noreferrer">{PAPER_ABSTRACT_URL}</a>{`},
+}`}</code></pre>
+    </section>
+  )
 }
 
 function OverviewStudyDesign({ manifest }: { manifest: Manifest }) {
@@ -758,20 +778,20 @@ function DifferenceCell({ label, value, format, favorable, interval }: { label: 
 type MetricHelpKind = 'infoAlpha' | 'murphy'
 
 type TooltipAnchor = { x: number; top: number; bottom: number }
-type BarTooltip = TooltipAnchor & { runId: string; modelName: string; metricValue: string }
+type BarTooltip = TooltipAnchor & { runId: string; modelName: string }
 
-function ModelTooltipContent({ modelName, metricValue }: { modelName: string; metricValue?: string }) {
+function ModelTooltipContent({ modelName }: { modelName: string }) {
   const metadata = modelMetadataFor(modelName)
-  const architecture = metadata.architecture.replace('Mixture of experts (MoE)', 'MoE').replace('Hybrid mixture of experts (MoE)', 'Hybrid MoE')
-  const reasoning = metadata.reasoningEffort.startsWith('Native') ? 'Native reasoning' : `${metadata.reasoningEffort} reasoning`
+  const effortLabels: Record<string, string> = { high: 'High', max: 'Max', xhigh: 'Extra High' }
+  const reasoning = metadata.reasoningEffort.startsWith('Native') ? 'Native' : (effortLabels[metadata.reasoningEffort] ?? metadata.reasoningEffort)
+  const architecture = metadata.architecture.startsWith('Hybrid') ? 'Hybrid MoE' : metadata.architecture.replace('Mixture of experts (MoE)', 'MoE')
   return <>
     <strong>{metadata.officialName}</strong>
-    {metricValue ? <span className="model-metadata-line model-metric-value">{metricValue}</span> : null}
     {!metadata.proprietary ? <>
-      <span className="model-metadata-line" aria-label={`Size: ${metadata.parameters}`}>{metadata.parameters}</span>
-      <span className="model-metadata-line" aria-label={`Architecture: ${architecture}`}>{architecture}</span>
+      <span className="model-metadata-line">Model Size: {metadata.sizeLabel}</span>
+      <span className="model-metadata-line">Architecture: {architecture}</span>
     </> : null}
-    <span className="model-metadata-line" aria-label={`Reasoning effort: ${metadata.reasoningEffort}`}>{reasoning}</span>
+    <span className="model-metadata-line">Reasoning Effort: {reasoning}</span>
   </>
 }
 
@@ -799,7 +819,7 @@ function FloatingChartTooltip({ id, anchor, children, className = '' }: { id: st
 }
 
 function ModelBarTooltip({ id, tooltip }: { id: string; tooltip: BarTooltip }) {
-  return <FloatingChartTooltip id={id} anchor={tooltip} className="model-metadata-tooltip"><ModelTooltipContent modelName={tooltip.modelName} metricValue={tooltip.metricValue} /></FloatingChartTooltip>
+  return <FloatingChartTooltip id={id} anchor={tooltip} className="model-metadata-tooltip"><ModelTooltipContent modelName={tooltip.modelName} /></FloatingChartTooltip>
 }
 
 const metricHelp: Record<MetricHelpKind, { label: string; description: string }> = {
@@ -841,11 +861,17 @@ function MetricHelp({ kind }: { kind: MetricHelpKind }) {
 
 type MemoryView = 'both' | 'independent' | 'sequential'
 
-function MemoryGlyph({ illumination = 'standard' }: { illumination?: MemoryView | 'standard' }) {
+const memoryModes: Record<MemoryView, { label: string; description: string }> = {
+  both: { label: 'All', description: 'Memory-free and Memory-on forecasts are shown together.' },
+  independent: { label: 'Memory-free', description: 'The agent forecasts without a belief notebook from the previous step.' },
+  sequential: { label: 'Memory-on', description: 'The agent forecasts using the previous step’s belief notebook.' },
+}
+
+function MemoryGlyph({ illumination = 'independent' }: { illumination?: MemoryView }) {
   const leftFill = illumination === 'independent' ? '#e0e2dd' : illumination === 'sequential' ? '#9e7fd6' : '#b49bdf'
-  const leftStroke = illumination === 'independent' ? '#92998f' : '#7052b8'
+  const leftStroke = illumination === 'independent' ? 'var(--memory-free)' : '#7052b8'
   const rightFill = illumination === 'independent' || illumination === 'both' ? '#e0e2dd' : illumination === 'sequential' ? '#63b8a2' : '#82c9b8'
-  const rightStroke = illumination === 'independent' || illumination === 'both' ? '#92998f' : '#398774'
+  const rightStroke = illumination === 'independent' || illumination === 'both' ? 'var(--memory-free)' : 'var(--memory-on)'
   return <svg viewBox="0 0 24 24" aria-hidden="true">
     <path fill={leftFill} stroke={leftStroke} d="M12 5.5C12 2.5 8 1.6 6.6 4.2C4 4.2 2.5 6.3 3.2 8.7C1.8 10.7 2.8 13.5 4.8 14.1C4 16.6 5.8 19 8 18.8C9.3 21.1 12 20.4 12 18.1Z" />
     <path fill={rightFill} stroke={rightStroke} d="M12 5.5C12 2.5 16 1.6 17.4 4.2C20 4.2 21.5 6.3 20.8 8.7C22.2 10.7 21.2 13.5 19.2 14.1C20 16.6 18.2 19 16 18.8C14.7 21.1 12 20.4 12 18.1Z" />
@@ -854,7 +880,7 @@ function MemoryGlyph({ illumination = 'standard' }: { illumination?: MemoryView 
   </svg>
 }
 
-function MemoryToggle({ title, enabled: memoryEnabled, comparisonMode, onChange }: { title: string; enabled: boolean; comparisonMode?: MemoryView; onChange: () => void }) {
+function MemoryToggle({ title, enabled: memoryEnabled, comparisonMode, showLabel = false, onChange }: { title: string; enabled: boolean; comparisonMode?: MemoryView; showLabel?: boolean; onChange: () => void }) {
   const [memoryTooltip, setMemoryTooltip] = useState<TooltipAnchor | null>(null)
   const memoryButtonRef = useRef<HTMLButtonElement>(null)
   const memoryTooltipId = useId()
@@ -876,20 +902,15 @@ function MemoryToggle({ title, enabled: memoryEnabled, comparisonMode, onChange 
     window.addEventListener('resize', reposition)
     return () => { window.removeEventListener('scroll', reposition, true); window.removeEventListener('resize', reposition) }
   }, [memoryTooltipVisible])
-  const mode = memoryEnabled ? 'Memory-on' : 'Memory-free'
-  const comparisonLabels = {
-    both: { label: 'Both memory modes', next: 'Memory-on only', explanation: 'Showing Memory-on and Memory-free models. Click to show Memory-on only.' },
-    sequential: { label: 'Memory-on models', next: 'Memory-free only', explanation: 'Models reuse earlier notes for the same question. Click to show Memory-free only.' },
-    independent: { label: 'Memory-free models', next: 'both memory modes', explanation: 'Models start fresh at every forecast. Click to show both memory modes.' },
-  }
-  const comparison = comparisonMode ? comparisonLabels[comparisonMode] : null
+  const illumination = comparisonMode ?? (memoryEnabled ? 'sequential' : 'independent')
+  const mode = memoryModes[illumination]
   return (
     <>
-        <button ref={memoryButtonRef} type="button" className={`memory-icon-control${memoryEnabled ? ' active' : ''}${comparisonMode ? ` memory-cycle-control ${comparisonMode}` : ''}`} aria-label={comparison ? `Models shown: ${comparison.label}. Click for ${comparison.next}.` : `Belief notebook memory for ${title}`} aria-pressed={comparisonMode === 'both' ? 'mixed' : memoryEnabled} aria-describedby={memoryTooltip ? memoryTooltipId : undefined} onMouseEnter={(event) => showMemoryTooltip(event.currentTarget)} onMouseLeave={() => setMemoryTooltip(null)} onFocus={(event) => showMemoryTooltip(event.currentTarget)} onBlur={() => setMemoryTooltip(null)} onKeyDown={(event) => { if (event.key === 'Escape') setMemoryTooltip(null) }} onClick={onChange}>
-          <MemoryGlyph illumination={comparisonMode ?? 'standard'} />
-          <span className="sr-only">{comparison?.label ?? mode}</span>
+        <button ref={memoryButtonRef} type="button" className={`memory-icon-control memory-cycle-control ${illumination}${memoryEnabled ? ' active' : ''}${showLabel ? ' memory-labeled-control' : ''}`} aria-label={`Models shown for ${title}: ${mode.label}`} aria-pressed={illumination === 'both' ? 'mixed' : memoryEnabled} aria-describedby={memoryTooltip ? memoryTooltipId : undefined} onMouseEnter={(event) => showMemoryTooltip(event.currentTarget)} onMouseLeave={() => setMemoryTooltip(null)} onFocus={(event) => showMemoryTooltip(event.currentTarget)} onBlur={() => setMemoryTooltip(null)} onKeyDown={(event) => { if (event.key === 'Escape') setMemoryTooltip(null) }} onClick={onChange}>
+          <MemoryGlyph illumination={illumination} />
+          <span className={showLabel ? 'memory-state-label' : 'sr-only'}>{mode.label}</span>
         </button>
-      {memoryTooltip ? <FloatingChartTooltip id={memoryTooltipId} anchor={memoryTooltip} className="model-metadata-tooltip"><strong>{comparison?.label ?? `Memory ${memoryEnabled ? 'on' : 'off'}`}</strong><span className="model-metadata-line">{comparison?.explanation ?? (memoryEnabled ? 'The model reuses earlier notes for the same question. Click to start fresh.' : 'The model starts fresh each time. Click to use earlier notes for the same question.')}</span></FloatingChartTooltip> : null}
+      {memoryTooltip ? <FloatingChartTooltip id={memoryTooltipId} anchor={memoryTooltip} className="model-metadata-tooltip"><strong>{mode.label}</strong><span className="model-metadata-line">{mode.description}</span></FloatingChartTooltip> : null}
     </>
   )
 }
@@ -1038,7 +1059,7 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
 
   const modelActions = (
           <div className="accuracy-chart-actions">
-            {modeControl === 'compare-select' ? <MemoryToggle title={title} enabled={memoryView === 'sequential'} comparisonMode={memoryView} onChange={() => setMemoryView((current) => current === 'both' ? 'sequential' : current === 'sequential' ? 'independent' : 'both')} /> : null}
+            {modeControl === 'compare-select' ? <MemoryToggle title={title} enabled={memoryView === 'sequential'} comparisonMode={memoryView} showLabel onChange={() => setMemoryView((current) => current === 'both' ? 'sequential' : current === 'sequential' ? 'independent' : 'both')} /> : null}
             {modeControl === 'select' ? <MemoryToggle title={title} enabled={memoryEnabled} onChange={() => setMemoryEnabled((enabled) => !enabled)} /> : null}
             <details className="accuracy-model-picker" name={controlName}>
               <summary><span aria-hidden="true">＋</span> Add models <small>{selected.length}/{groups.length}</small></summary>
@@ -1149,7 +1170,6 @@ function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { run
     setBarTooltip({
       runId: run.id,
       modelName: run.modelName,
-      metricValue: formatLeaderboardValue(metric, run[metric]!),
       x: rect.left + rect.width / 2,
       top: rect.top,
       bottom: rect.bottom,
@@ -1290,7 +1310,7 @@ function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { run
                         </div>
                       </div>
                       <ProviderMark provider={provider} />
-                      <div className="accuracy-model-label" title={group.modelName} aria-label={group.modelName}>{leaderboardLabelLines(group.modelName).map((line, index) => <span key={index}>{line}</span>)}</div>
+                      <div className="accuracy-model-label" title={metadata.chartName} aria-label={metadata.chartName}>{leaderboardLabelLines(group.modelName).map((line, index) => <span key={index}>{line}</span>)}</div>
                     </article>
                   )
                 })}
@@ -2338,12 +2358,13 @@ function compactLeaderboardName(value: string) {
 }
 
 function leaderboardLabelLines(value: string) {
-  const [family, ...variant] = compactLeaderboardName(value).replace(/^(gpt-oss)-(.+)$/i, '$1 $2').split(' ')
+  const [family, ...variant] = compactLeaderboardName(value).split(' ')
   return variant.length ? [family, variant.join(' ')] : [family]
 }
 
 function shortModelName(value: string) {
   const lower = value.toLowerCase()
+  if (lower === 'gpt-oss-120b') return 'gpt-oss-120B'
   if (lower.includes('opus-4.6') || lower.includes('opus 4.6')) return 'Opus 4.6'
   if (lower.includes('qwen3-30b-a3b')) return 'Qwen3 30B'
   if (lower.includes('qwen3-32b')) return 'Qwen3 32B'
