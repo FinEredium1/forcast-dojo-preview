@@ -104,6 +104,22 @@ cards show the official name, metric value, and paper-verified reasoning effort;
 open-weight models also show size and architecture. Cost is a separate bar chart
 for the five priced proprietary models.
 
+Model order follows the selected memory mode: lower Brier and cost first, higher
+accuracy and information alpha first. Switching memory preserves model selections
+and filters while recalculating the order. The question-type table defaults to
+binary accuracy, highest first. Click the Binary or Multiple-choice column header
+to change its ranking; the selected column persists when switching memory modes.
+The domain ranking uses information alpha within the selected domain, highest
+first. Memory-free and Memory-on each rank their own runs; All ranks both sets
+together, with separate entries for each model's memory modes. Tool calls
+per checkpoint orders the visible runs by total average tool calls, highest first,
+for the selected memory mode. Hover or focus a bar to see a compact popup with
+average Search, Scrape, and Python calls per checkpoint.
+The three-condition comparison sorts by the selected metric and clickable
+condition header, defaulting to Memory-free Brier. The belief-notebook comparison
+defaults to the largest Brier improvement and offers sorting by every displayed
+metric; Brier differences sort lowest first, and the other effects highest first.
+
 To upload newly generated assets after review:
 
 ```powershell

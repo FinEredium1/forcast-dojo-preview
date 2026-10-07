@@ -21,7 +21,6 @@ export function ForecastStagesFigure({ data }: { data: PaperFiguresSummary['fore
     <div className="paper-result-heading"><div><p className="eyebrow">Forecast evolution</p><h2 id="forecast-stages-title">Forecasts improve as events unfold</h2></div><div className="paper-result-takeaway"><strong>{free.points[0].brier.toFixed(3)} <span>→</span> {free.points[2].brier.toFixed(3)}</strong><span>Memory-free Brier ↓</span></div></div>
     <div className="paper-series-legend" role="group" aria-label="Highlight a forecasting condition">
       {data.series.map(series => <button type="button" key={series.id} aria-pressed={selected.id === series.id} style={{ '--series-color': colors[series.id] } as CSSProperties} onClick={() => setActive({ id: series.id, stage: active.stage })}><i className={series.id} />{series.label}</button>)}
-      <span>{free.nModels} models · {free.nEvents} events · Brier ↓</span>
     </div>
     <figure className="paper-stage-chart">
       <div className="paper-stage-y-axis" aria-hidden="true">{ticks.map(tick => <span key={tick} style={{ bottom: `${y(tick)}%` }}>{tick.toFixed(2)}</span>)}</div>

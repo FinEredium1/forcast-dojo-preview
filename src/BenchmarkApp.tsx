@@ -278,15 +278,21 @@ function PaperOverviewFigure() {
 
 function ConditionComparison({ runs }: { runs: RunSummary[] }) {
   const [metric, setMetric] = useState<Metric>('brier')
-  const models = [...new Set(runs.map((run) => run.modelName))].sort((a, b) => {
-    const score = (name: string) => runs.find((run) => run.modelName === name && run.retrieval === 'baseline' && run.mode === 'independent')?.brier ?? Infinity
-    return score(a) - score(b)
-  })
+  const [sortCondition, setSortCondition] = useState(1)
+  const lowerIsBetter = metric === 'brier'
   const conditions = [
     { label: 'No tools', retrieval: 'none', mode: 'independent' },
     { label: 'Memory-free', retrieval: 'baseline', mode: 'independent' },
     { label: 'Memory-on', retrieval: 'baseline', mode: 'sequential' },
   ]
+  const selectedCondition = conditions[sortCondition]
+  const models = [...new Set(runs.map((run) => run.modelName))].sort((a, b) => {
+    const score = (name: string) => {
+      const value = runs.find((run) => run.modelName === name && run.retrieval === selectedCondition.retrieval && run.mode === selectedCondition.mode)?.[metric]
+      return isFiniteNumber(value) ? value : lowerIsBetter ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY
+    }
+    return (lowerIsBetter ? score(a) - score(b) : score(b) - score(a)) || a.localeCompare(b)
+  })
   return (
     <section className="condition-comparison section-rule" aria-labelledby="condition-comparison-title">
       <div className="section-heading"><div><p className="eyebrow">Research tools</p><h2 id="condition-comparison-title">What changes with tools and memory?</h2></div></div>
@@ -297,17 +303,19 @@ function ConditionComparison({ runs }: { runs: RunSummary[] }) {
         </span>
       </div>
       <div className="condition-table-scroll"><table aria-label="Model performance with and without research tools and memory">
-        <thead><tr><th scope="col">Model</th>{conditions.map((condition) => <th key={condition.label} scope="col" className={condition.mode}>{condition.label}</th>)}</tr></thead>
+        <thead><tr><th scope="col">Model</th>{conditions.map((condition, index) => <th key={condition.label} scope="col" className={condition.mode} aria-sort={sortCondition === index ? (lowerIsBetter ? 'ascending' : 'descending') : 'none'}>
+          <ColumnSortButton label={condition.label} selected={sortCondition === index} ascending={lowerIsBetter} sortLabel={`${condition.label.toLowerCase()} ${metricDetails[metric].label.toLowerCase()}`} onClick={() => setSortCondition(index)} />
+        </th>)}</tr></thead>
         <tbody>{models.map((model) => {
           const modelRuns = conditions.map((condition) => runs.find((run) => run.modelName === model && run.retrieval === condition.retrieval && run.mode === condition.mode))
           const available = modelRuns.flatMap((run) => run?.[metric] == null ? [] : [run[metric]!])
           const best = metric === 'brier' ? Math.min(...available) : Math.max(...available)
           return <tr key={model}><th scope="row">{shortModelName(model)}</th>{modelRuns.map((run, index) => <td key={conditions[index].label} className={run?.[metric] === best ? 'best-condition' : ''} title={run ? `${number(run.nRows)} recorded forecasts · ${number(run.nMissing ?? 0)} missing · ${percent(run.responseRate)} usable reports` : 'Unavailable'}>
             {formatMetric(run?.[metric] ?? null, metric)}
-            {run && !run.complete ? <small>{percent(run.coverage, 1)} coverage</small> : null}
           </td>)}</tr>
         })}</tbody>
       </table></div>
+      <p className="analysis-note">Click a condition header to rank models by the selected metric. {metricDetails[metric].direction}.</p>
     </section>
   )
 }
@@ -322,7 +330,7 @@ function ResultsPage({ runs, analysis }: { runs: RunSummary[]; analysis: Analysi
 
   return (
     <div className="analysis-page">
-      {analysis ? <ModelFilteredAnalysisSection chartId="results-domain" eyebrow="Domain breakdown" title="Which model performs best in each domain?" note="Models are ranked by information alpha against the crowd." runs={runs} eligibleRunIds={analysisRunIds} modeControl="compare-select" hideModelStatus controlsInHeading headingActionsPlacement="eyebrow">
+      {analysis ? <ModelFilteredAnalysisSection chartId="results-domain" eyebrow="Domain breakdown" title="Which model performs best in each domain?" note="Models are ranked by information alpha against the crowd, highest first, for the selected domain and memory mode." runs={runs} eligibleRunIds={analysisRunIds} modeControl="compare-select" hideModelStatus controlsInHeading headingActionsPlacement="eyebrow">
         {({ visibleRunIds }) => <DomainLeaderboardChart analysisRuns={analysis.runs.filter((run) => analysisRunIds.includes(run.runId))} runSummaries={runs} visibleRunIds={visibleRunIds} domains={analysis.domains} />}
       </ModelFilteredAnalysisSection> : null}
 
@@ -615,13 +623,34 @@ function PaperRedirect() {
   return <LoadingPage label="Opening the paper…" />
 }
 
+function ColumnSortButton({ label, selected, ascending = false, sortLabel = label, onClick }: { label: string; selected: boolean; ascending?: boolean; sortLabel?: string; onClick: () => void }) {
+  return <button type="button" className={`breakdown-sort-button${selected ? ' active' : ''}`} aria-label={`Sort by ${sortLabel}, ${ascending ? 'lowest' : 'highest'} first`} onClick={onClick}>
+    <span>{label}</span><span className="breakdown-sort-indicator" aria-hidden="true">{ascending ? '↑' : '↓'}</span>
+  </button>
+}
+
 function BreakdownMatrix({ runs, keys, field, metric, visibleRunIds }: { runs: RunAnalysis[]; keys: Array<{ key: string; label: string }>; field: 'byDomain' | 'byHorizon' | 'byQuestionType'; metric: Metric; visibleRunIds?: string[] }) {
+  const [sortKey, setSortKey] = useState('binary')
+  const activeSortKey = keys.some(({ key }) => key === sortKey) ? sortKey : keys[0]?.key
+  const lowerIsBetter = metric === 'brier'
   const runOrder = visibleRunIds ? new Map(visibleRunIds.map((id, index) => [id, index])) : null
   const orderedRuns = [...runs]
     .filter((run) => !runOrder || runOrder.has(run.runId))
-    .sort((a, b) => runOrder
-      ? (runOrder.get(a.runId) ?? Number.MAX_SAFE_INTEGER) - (runOrder.get(b.runId) ?? Number.MAX_SAFE_INTEGER)
-      : (b.overall.accuracy ?? Number.NEGATIVE_INFINITY) - (a.overall.accuracy ?? Number.NEGATIVE_INFINITY))
+    .sort((a, b) => {
+      if (field === 'byQuestionType') {
+        const score = (run: RunAnalysis) => {
+          const cell = run.byQuestionType.find((candidate) => candidate.key === activeSortKey)
+          return cell && cell.nScored > 0 && isFiniteNumber(cell[metric])
+            ? cell[metric]
+            : lowerIsBetter ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY
+        }
+        const difference = lowerIsBetter ? score(a) - score(b) : score(b) - score(a)
+        return difference || a.modelName.localeCompare(b.modelName) || a.runId.localeCompare(b.runId)
+      }
+      return runOrder
+        ? (runOrder.get(a.runId) ?? Number.MAX_SAFE_INTEGER) - (runOrder.get(b.runId) ?? Number.MAX_SAFE_INTEGER)
+        : (b.overall.accuracy ?? Number.NEGATIVE_INFINITY) - (a.overall.accuracy ?? Number.NEGATIVE_INFINITY)
+    })
   const values = runs.flatMap((run) => run[field].map((cell) => cell[metric]).filter(isFiniteNumber))
   const minimum = values.length ? Math.min(...values) : 0
   const maximum = values.length ? Math.max(...values) : 1
@@ -641,7 +670,9 @@ function BreakdownMatrix({ runs, keys, field, metric, visibleRunIds }: { runs: R
       <div role="table" aria-label={`${metricDetails[metric].label} by ${field === 'byHorizon' ? 'resolution horizon' : 'question type'}`}>
       <div className="breakdown-run comparison-column-header" role="row">
         <span role="columnheader" className="comparison-model-header">Model</span>
-        <div className="breakdown-cells" role="presentation">{keys.map(({ key, label }) => <span role="columnheader" key={key}>{label}</span>)}</div>
+        <div className="breakdown-cells" role="presentation">{keys.map(({ key, label }) => <span role="columnheader" key={key} aria-sort={field === 'byQuestionType' ? (activeSortKey === key ? (lowerIsBetter ? 'ascending' : 'descending') : 'none') : undefined}>
+          {field === 'byQuestionType' ? <ColumnSortButton label={label} selected={activeSortKey === key} ascending={lowerIsBetter} sortLabel={`${label.toLowerCase()} ${metricDetails[metric].label.toLowerCase()}`} onClick={() => setSortKey(key)} /> : label}
+        </span>)}</div>
       </div>
       {orderedRuns.map((run) => {
         const cells = new Map(run[field].map((cell) => [cell.key, cell]))
@@ -659,7 +690,7 @@ function BreakdownMatrix({ runs, keys, field, metric, visibleRunIds }: { runs: R
         )
       })}
       </div>
-      {field === 'byQuestionType' ? <figcaption>Mean {metricDetails[metric].label.toLowerCase()} across scored checkpoints, by question format. {checkpointCounts ? `Per model: ${checkpointCounts}.` : ''}</figcaption> : <figcaption>Each cell shows mean {metricDetails[metric].label.toLowerCase()} across scored checkpoints. {checkpointCounts ? `Counts per model: ${checkpointCounts}. ` : ''}Color intensity is normalized within this visualization; use the printed values for comparisons.</figcaption>}
+      {field === 'byQuestionType' ? <figcaption>Mean scores across scored checkpoints. {checkpointCounts ? `Per model: ${checkpointCounts}.` : ''}</figcaption> : <figcaption>Each cell shows mean {metricDetails[metric].label.toLowerCase()} across scored checkpoints. {checkpointCounts ? `Counts per model: ${checkpointCounts}. ` : ''}Color intensity is normalized within this visualization; use the printed values for comparisons.</figcaption>}
     </figure>
   )
 }
@@ -688,9 +719,10 @@ function DomainLeaderboardChart({ analysisRuns, runSummaries, visibleRunIds, dom
     if (!cell || !isFiniteNumber(cell.infoAlpha) || cell.nScored <= 0) return []
     const group = groupByRunId.get(run.runId)
     return [{ run, cell, infoAlpha: cell.infoAlpha, summary: summaryById.get(run.runId), provider: group ? providerForGroup(group) : undefined }]
-  }).sort((a, b) => b.infoAlpha - a.infoAlpha || b.cell.nQuestions - a.cell.nQuestions || a.run.modelName.localeCompare(b.run.modelName))
+  })
   const visible = new Set(visibleRunIds ?? analysisRuns.map((run) => run.runId))
   const ranked = candidates.filter((candidate) => visible.has(candidate.run.runId))
+    .sort((a, b) => b.infoAlpha - a.infoAlpha || b.cell.nQuestions - a.cell.nQuestions || a.run.modelName.localeCompare(b.run.modelName) || a.run.runId.localeCompare(b.run.runId))
   const leader = ranked[0]
   const selected = ranked.find((candidate) => candidate.run.runId === selectedRunId)
   const inspected = selected ?? ranked.find((candidate) => candidate.run.runId === inspectedRunId) ?? leader
@@ -749,22 +781,33 @@ function DomainLeaderboardChart({ analysisRuns, runSummaries, visibleRunIds, dom
 }
 
 function PairedModeChart({ comparisons, visibleGroupIds }: { comparisons: PairedModeComparison[]; visibleGroupIds?: string[] }) {
-  const groupOrder = visibleGroupIds ? new Map(visibleGroupIds.map((id, index) => [id, index])) : null
+  const columns = [
+    { key: 'accuracyDifference', label: 'Accuracy Δ' },
+    { key: 'brierDifference', label: 'Brier Δ' },
+    { key: 'infoAlphaDifference', label: 'Information α Δ' },
+    { key: 'sequentialWinRate', label: 'Memory-on lower Brier' },
+  ] as const
+  const [sortMetric, setSortMetric] = useState<(typeof columns)[number]['key']>('brierDifference')
+  const lowerIsBetter = sortMetric === 'brierDifference'
+  const visible = visibleGroupIds ? new Set(visibleGroupIds) : null
   const ordered = [...comparisons]
-    .filter((comparison) => !groupOrder || groupOrder.has(runGroupIdFromRunId(comparison.sequentialRunId)))
-    .sort((a, b) => groupOrder
-      ? (groupOrder.get(runGroupIdFromRunId(a.sequentialRunId)) ?? Number.MAX_SAFE_INTEGER) - (groupOrder.get(runGroupIdFromRunId(b.sequentialRunId)) ?? Number.MAX_SAFE_INTEGER)
-      : a.modelName.localeCompare(b.modelName))
+    .filter((comparison) => !visible || visible.has(runGroupIdFromRunId(comparison.sequentialRunId)))
+    .sort((a, b) => {
+      const score = (comparison: PairedModeComparison) => {
+        const value = comparison[sortMetric]
+        return isFiniteNumber(value) ? value : lowerIsBetter ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY
+      }
+      return (lowerIsBetter ? score(a) - score(b) : score(b) - score(a)) || a.modelName.localeCompare(b.modelName)
+    })
   return (
     <figure className="paired-mode-chart">
       <div role="table" aria-label="Memory-on minus memory-free performance">
       <div className="paired-mode-row comparison-column-header" role="row">
         <span role="columnheader" className="comparison-model-header">Model</span>
         <div className="paired-mode-metrics" role="presentation">
-          <span role="columnheader">Accuracy Δ</span>
-          <span role="columnheader">Brier Δ</span>
-          <span role="columnheader">Information α Δ</span>
-          <span role="columnheader">Memory-on lower Brier</span>
+          {columns.map(({ key, label }) => <span role="columnheader" key={key} aria-sort={sortMetric === key ? (lowerIsBetter ? 'ascending' : 'descending') : 'none'}>
+            <ColumnSortButton label={label} selected={sortMetric === key} ascending={key === 'brierDifference'} onClick={() => setSortMetric(key)} />
+          </span>)}
         </div>
       </div>
       {ordered.map((comparison) => (
@@ -1052,12 +1095,15 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
   const matchesMemoryMode = (run: RunSummary) => modeControl === 'compare' || (modeControl === 'compare-select' && memoryView === 'both')
     ? run.mode === 'independent' || run.mode === 'sequential'
     : run.mode === (modeControl === 'compare-select' ? memoryView : activeMode)
+  const rankingMode = modeControl === 'compare'
+    ? undefined
+    : modeControl === 'compare-select' ? (memoryView === 'both' ? undefined : memoryView) : activeMode
   const visibleGroups = selected.filter((group) => (
     (sourceFilter === 'all' || group.sourceType === sourceFilter)
     && (providerFilter === 'all' || providerNameForGroup(group) === providerFilter)
     && (releaseFilter === 'all' || (isHistoricalGroup(group) ? 'historical' : 'current') === releaseFilter)
     && group.runs.some(matchesMemoryMode)
-  ))
+  )).sort((a, b) => compareGroupMetric(a, b, 'accuracy', rankingMode))
   const visibleGroupIds = visibleGroups.map((group) => group.id)
   const visibleRunIds = visibleGroups.flatMap((group) => group.runs.filter(matchesMemoryMode).map((run) => run.id))
   const activeFilterCount = [sourceFilter, releaseFilter, providerFilter].filter((value) => value !== 'all').length
@@ -1158,11 +1204,11 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
 
 function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled, heading, memoryControl }: { runs: RunSummary[]; baseline: number | null; metric: LeaderboardMetric; memoryEnabled: boolean; heading: React.ReactNode; memoryControl: React.ReactNode }) {
   const details = leaderboardMetricDetails[metric]
+  const activeMode: Exclude<ForecastMode, 'unknown'> = memoryEnabled ? 'sequential' : 'independent'
   const allGroups = useMemo(() => groupRuns(runs)
-    .filter((group) => group.runs.some((run) => isFiniteNumber(run[metric])))
-    .sort((a, b) => compareGroupMetric(a, b, metric)), [runs, metric])
-  const groups = useMemo(() => allGroups
-    .sort((a, b) => compareIndependentGroupMetric(a, b, metric)), [allGroups, metric])
+    .filter((group) => group.runs.some((run) => isFiniteNumber(run[metric]))), [runs, metric])
+  const groups = useMemo(() => [...allGroups]
+    .sort((a, b) => compareGroupMetric(a, b, metric, activeMode)), [allGroups, metric, activeMode])
   const defaults = useMemo(() => groups.map((group) => group.id), [groups])
   const [selectedIds, setSelectedIds] = useState<string[]>(defaults)
   const [modelSearch, setModelSearch] = useState('')
@@ -1181,7 +1227,6 @@ function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled, heading
     const haystack = `${group.modelName} ${provider?.name ?? ''} ${group.runs[0]?.baseModel ?? ''}`.toLowerCase()
     return haystack.includes(modelSearch.trim().toLowerCase())
   })
-  const activeMode: Exclude<ForecastMode, 'unknown'> = memoryEnabled ? 'sequential' : 'independent'
   const activeEntries = selected.map((group) => {
     const activeGroup = group
     const run = activeGroup?.runs.find((candidate) => candidate.mode === activeMode)
@@ -1378,6 +1423,7 @@ type ResearchScatterDatum = {
 }
 
 function ResearchScatterChart({ runs, murphy, kind, memoryEnabled, heading, memoryControl }: { runs: RunSummary[]; murphy: MurphySummary[]; kind: ResearchScatterKind; memoryEnabled: boolean; heading: React.ReactNode; memoryControl: React.ReactNode }) {
+  const activeMode: Exclude<ForecastMode, 'unknown'> = memoryEnabled ? 'sequential' : 'independent'
   const plotRef = useRef<HTMLDivElement>(null)
   const [plotSize, setPlotSize] = useState({ width: 958, height: 484 })
   const [modelTooltip, setModelTooltip] = useState<{ point: ResearchScatterDatum; anchor: TooltipAnchor } | null>(null)
@@ -1390,8 +1436,8 @@ function ResearchScatterChart({ runs, murphy, kind, memoryEnabled, heading, memo
   ), [kind, murphy, runs])
   const allGroups = useMemo(() => groupRuns(runs)
     .filter((group) => group.runs.some((run) => eligibleRunIds.has(run.id))), [eligibleRunIds, runs])
-  const groups = useMemo(() => allGroups
-    .sort((a, b) => compareIndependentGroupMetric(a, b, kind === 'murphy' ? 'brier' : 'infoAlpha')), [allGroups, kind])
+  const groups = useMemo(() => [...allGroups]
+    .sort((a, b) => compareGroupMetric(a, b, kind === 'murphy' ? 'brier' : 'infoAlpha', activeMode)), [allGroups, kind, activeMode])
   const defaults = useMemo(() => groups.map((group) => group.id), [groups])
   const [selectedIds, setSelectedIds] = useState<string[]>(defaults)
   const [modelSearch, setModelSearch] = useState('')
@@ -1402,7 +1448,6 @@ function ResearchScatterChart({ runs, murphy, kind, memoryEnabled, heading, memo
   const [showGridlines, setShowGridlines] = useState(true)
   const [showReference, setShowReference] = useState(true)
   const [showFrontier, setShowFrontier] = useState(true)
-  const activeMode: Exclude<ForecastMode, 'unknown'> = memoryEnabled ? 'sequential' : 'independent'
   const selected = groups.filter((group) => selectedIds.includes(group.id))
   const searchTerm = modelSearch.trim().toLowerCase()
   const searchResults = groups.filter((group) => {
@@ -1921,10 +1966,30 @@ function GroupedRunChart({ runs, metric, format, baseline = null, baselineLabel 
 }
 
 function ToolMixChart({ runs, visibleRunIds }: { runs: RunSummary[]; visibleRunIds?: string[] }) {
+  const [toolTooltip, setToolTooltip] = useState<{ run: RunSummary; anchor: TooltipAnchor } | null>(null)
+  const toolTooltipId = useId()
+  const tooltipVisible = toolTooltip !== null
+  useEffect(() => setToolTooltip(null), [runs, visibleRunIds])
+  useEffect(() => {
+    if (!tooltipVisible) return
+    const dismiss = () => setToolTooltip(null)
+    window.addEventListener('scroll', dismiss, true)
+    window.addEventListener('resize', dismiss)
+    return () => {
+      window.removeEventListener('scroll', dismiss, true)
+      window.removeEventListener('resize', dismiss)
+    }
+  }, [tooltipVisible])
+  const revealToolTooltip = (element: HTMLDivElement, run: RunSummary) => {
+    const bounds = (element.querySelector('.tool-mix-track') ?? element).getBoundingClientRect()
+    setToolTooltip({ run, anchor: { x: bounds.left + bounds.width / 2, top: bounds.top, bottom: bounds.bottom } })
+  }
   const runMap = new Map(runs.map((run) => [run.id, run]))
-  const orderedRuns = visibleRunIds
+  const visibleRuns = visibleRunIds
     ? visibleRunIds.map((id) => runMap.get(id)).filter((run): run is RunSummary => Boolean(run))
     : groupRuns(runs).flatMap((group) => ['independent', 'sequential'].map((mode) => group.runs.find((run) => run.mode === mode)).filter((run): run is RunSummary => Boolean(run)))
+  const orderedRuns = visibleRuns.sort((a, b) => (b.avgToolCalls ?? Number.NEGATIVE_INFINITY) - (a.avgToolCalls ?? Number.NEGATIVE_INFINITY)
+    || a.modelName.localeCompare(b.modelName) || a.id.localeCompare(b.id))
   const maximum = Math.max(1, ...runs.map((run) => run.avgToolCalls ?? 0))
   const mixedModes = new Set(orderedRuns.map((run) => run.mode)).size > 1
   return (
@@ -1935,9 +2000,9 @@ function ToolMixChart({ runs, visibleRunIds }: { runs: RunSummary[]; visibleRunI
           const search = run.avgSearchCalls ?? 0
           const scrape = run.avgScrapeCalls ?? 0
           const python = run.avgPythonCalls ?? 0
-          const tooltip = `${run.modelName} · ${modeLabel(run.mode)} · ${formatChartValue(run.avgToolCalls, 'count')} tool calls per checkpoint`
+          const tooltip = `${run.modelName} · ${modeLabel(run.mode)} · ${formatChartValue(run.avgToolCalls, 'count')} tool calls per checkpoint · Search ${formatChartValue(run.avgSearchCalls, 'count')} · Scrape ${formatChartValue(run.avgScrapeCalls, 'count')} · Python ${formatChartValue(run.avgPythonCalls, 'count')}`
           return (
-            <div className="tool-mix-row" key={run.id} role="img" aria-label={tooltip} tabIndex={0}>
+            <div className="tool-mix-row" key={run.id} role="img" aria-label={tooltip} tabIndex={0} aria-describedby={toolTooltip?.run.id === run.id ? toolTooltipId : undefined} onMouseEnter={(event) => revealToolTooltip(event.currentTarget, run)} onMouseLeave={() => setToolTooltip(null)} onFocus={(event) => revealToolTooltip(event.currentTarget, run)} onBlur={() => setToolTooltip(null)} onClick={(event) => revealToolTooltip(event.currentTarget, run)} onKeyDown={(event) => { if (event.key === 'Escape') setToolTooltip(null) }}>
               <div className="tool-mix-identity"><strong>{shortModelName(run.modelName)}</strong><span>{mixedModes ? `${modeLabel(run.mode)} · ` : ''}{sourceLabel(run.sourceType)}</span></div>
               <div className="tool-mix-track" aria-hidden="true"><span className="search" style={{ width: `${(search / maximum) * 100}%` }} /><span className="scrape" style={{ width: `${(scrape / maximum) * 100}%` }} /><span className="python" style={{ width: `${(python / maximum) * 100}%` }} /></div>
               <strong className="tool-mix-total">{formatChartValue(run.avgToolCalls, 'count')}</strong>
@@ -1945,6 +2010,15 @@ function ToolMixChart({ runs, visibleRunIds }: { runs: RunSummary[]; visibleRunI
           )
         })}
       </div>
+      {toolTooltip ? <FloatingChartTooltip id={toolTooltipId} anchor={toolTooltip.anchor} className="tool-mix-tooltip">
+        <strong>{shortModelName(toolTooltip.run.modelName)}</strong>
+        <small>{modeLabel(toolTooltip.run.mode)} · per checkpoint</small>
+        <dl>
+          <div><dt><i className="search" aria-hidden="true" />Search</dt><dd>{formatChartValue(toolTooltip.run.avgSearchCalls, 'count')}</dd></div>
+          <div><dt><i className="scrape" aria-hidden="true" />Scrape</dt><dd>{formatChartValue(toolTooltip.run.avgScrapeCalls, 'count')}</dd></div>
+          <div><dt><i className="python" aria-hidden="true" />Python</dt><dd>{formatChartValue(toolTooltip.run.avgPythonCalls, 'count')}</dd></div>
+        </dl>
+      </FloatingChartTooltip> : null}
     </figure>
   )
 }
@@ -2396,9 +2470,9 @@ function defaultMetricGroupIds(groups: RunGroup[], metric: Metric) {
   return ranked.filter((group) => selected.has(group.id)).map((group) => group.id)
 }
 
-function compareGroupMetric(a: RunGroup, b: RunGroup, metric: LeaderboardMetric) {
-  const aScore = groupMetricScore(a, metric)
-  const bScore = groupMetricScore(b, metric)
+function compareGroupMetric(a: RunGroup, b: RunGroup, metric: LeaderboardMetric, mode?: ForecastMode) {
+  const aScore = groupMetricScore(a, metric, mode)
+  const bScore = groupMetricScore(b, metric, mode)
   const difference = metric === 'brier' || metric === 'avgUsd' ? aScore - bScore : bScore - aScore
   return difference || a.modelName.localeCompare(b.modelName)
 }
@@ -2415,8 +2489,8 @@ function independentGroupMetricScore(group: RunGroup, metric: LeaderboardMetric)
   return isFiniteNumber(value) ? value : groupMetricScore(group, metric)
 }
 
-function groupMetricScore(group: RunGroup, metric: LeaderboardMetric) {
-  const values = group.runs.map((run) => run[metric]).filter(isFiniteNumber)
+function groupMetricScore(group: RunGroup, metric: LeaderboardMetric, mode?: ForecastMode) {
+  const values = group.runs.filter((run) => !mode || run.mode === mode).map((run) => run[metric]).filter(isFiniteNumber)
   const lowerIsBetter = metric === 'brier' || metric === 'avgUsd'
   if (!values.length) return lowerIsBetter ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY
   return lowerIsBetter ? Math.min(...values) : Math.max(...values)
