@@ -1,14 +1,10 @@
 import { useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties } from 'react'
 import type { PaperFiguresSummary } from './types'
 
 const colors = { 'no-tools': '#857b70', 'memory-free': '#7052b8', 'memory-on': '#398774' }
 const count = (value: number) => value.toLocaleString('en-US')
 const money = (value: number) => `$${value.toFixed(2)}`
-
-function SourceDetails({ href, children }: { href: string; children: ReactNode }) {
-  return <details className="paper-figure-method"><summary>Methods &amp; source</summary><div>{children}<a href={href} target="_blank" rel="noopener noreferrer">View in the paper ↗</a></div></details>
-}
 
 export function ForecastStagesFigure({ data }: { data: PaperFiguresSummary['forecastStages'] }) {
   const [active, setActive] = useState({ id: 'memory-free', stage: 2 })
@@ -37,12 +33,12 @@ export function ForecastStagesFigure({ data }: { data: PaperFiguresSummary['fore
         {data.series.flatMap((series, s) => series.points.map((p, i) => <button type="button" className={`paper-stage-point${active.id === series.id && active.stage === i ? ' selected' : ''}`} key={`${series.id}-${i}`} style={{ left: `${x(i, s)}%`, bottom: `${y(p.brier)}%`, '--series-color': colors[series.id] } as CSSProperties} aria-label={`${series.label}, ${p.stage}: Brier ${p.brier.toFixed(3)}, 95% event-bootstrap confidence interval ${p.interval.lower.toFixed(3)} to ${p.interval.upper.toFixed(3)}`} aria-pressed={active.id === series.id && active.stage === i} onMouseEnter={() => setActive({ id: series.id, stage: i })} onFocus={() => setActive({ id: series.id, stage: i })} onClick={() => setActive({ id: series.id, stage: i })}><span /></button>))}
         {['Early', 'Middle', 'Late'].map((label, i) => <span className="paper-stage-x-label" key={label} style={{ left: `${10 + i * 40}%` }}>{label}</span>)}
       </div>
-      <figcaption className="paper-stage-readout" aria-live="polite"><span style={{ color: colors[selected.id] }}><b>{selected.label}</b> · {point.stage}</span><strong>{point.brier.toFixed(3)} <small>Brier</small></strong><span>95% CI {point.interval.lower.toFixed(3)}–{point.interval.upper.toFixed(3)}</span></figcaption>
+      <figcaption className="paper-stage-readout" aria-live="polite" style={{ '--series-color': colors[selected.id] } as CSSProperties}>
+        <div className="paper-stage-selection"><i aria-hidden="true" /><strong>{selected.label}</strong><span>{point.stage} forecast</span></div>
+        <div className="paper-stage-score"><span>Brier</span><strong>{point.brier.toFixed(3)}</strong></div>
+        <div className="paper-stage-interval"><span>95% confidence interval</span><strong>[{point.interval.lower.toFixed(3)}, {point.interval.upper.toFixed(3)}]</strong></div>
+      </figcaption>
     </figure>
-    <SourceDetails href={data.sourceUrl}>
-      <p>Stages are thirds of relative forecast-step position: [0, ⅓], (⅓, ⅔], (⅔, 1]. Each event receives equal weight, then the 12 model means are averaged. Recorded unusable forecasts use uniform probabilities; missing records are excluded. Only dates with an available market probability and events represented in all three stages contribute. Intervals resample whole events {count(data.bootstrapSamples)} times.</p>
-      <div className="paper-figure-table-scroll"><table><caption>Brier by forecast stage</caption><thead><tr><th>Condition</th><th>Early</th><th>Middle</th><th>Late</th></tr></thead><tbody>{data.series.map(series => <tr key={series.id}><th scope="row">{series.label}</th>{series.points.map(p => <td key={p.stage}>{p.brier.toFixed(3)}</td>)}</tr>)}</tbody></table></div>
-    </SourceDetails>
   </section>
 }
 
@@ -61,35 +57,36 @@ export function TrainingFigure({ data }: { data: PaperFiguresSummary['training']
       </figure>
     })}</div>
     <div className="paper-figure-footnote"><span>{count(data.nForecasts)} held-out forecasts</span><span>Paper-reported results · Table 4</span></div>
-    <SourceDetails href={data.sourceUrl}>
-      <p>{data.source} The student is fine-tuned on trajectories from {count(data.trainingEvents)} training events ({count(data.trainingSteps)} forecast steps), then evaluated on later, separate events. Paired differences are computed before rounding, so they can differ from subtracting the displayed means. Confidence intervals resample whole events. Unusable recorded reports receive uniform probabilities.</p>
-      <p>Tool calls increase from {data.baseToolCalls.toFixed(1)} to {data.sftToolCalls.toFixed(1)} per forecast. This is one supervised fine-tuning proof of concept.</p>
-    </SourceDetails>
   </section>
 }
 
 export function MemoryCostFigure({ data }: { data: PaperFiguresSummary['memoryCost'] }) {
-  const maxCost = Math.ceil(Math.max(...data.pairs.flatMap(pair => [pair.memoryFree, pair.memoryOn])))
-  const position = (v: number) => v / maxCost * 100
+  const costs = data.pairs.flatMap(pair => [pair.memoryFree, pair.memoryOn])
+  const lowest = Math.min(...costs)
+  const highest = Math.max(...costs)
+  const spread = Math.max(highest - lowest, highest * .1, .01)
+  const minCost = Math.max(0, lowest - spread * .08)
+  const maxCost = highest + spread * .08
+  const position = (v: number) => (v - minCost) / (maxCost - minCost) * 100
+  const magnitude = 10 ** Math.floor(Math.log10(spread / 4))
+  const tickStep = [1, 2, 5, 10].find(step => step * magnitude >= spread / 4)! * magnitude
+  const firstTick = Math.ceil(minCost / tickStep)
+  const ticks = Array.from({ length: Math.floor(maxCost / tickStep) - firstTick + 1 }, (_, i) => (firstTick + i) * tickStep)
   return <section className="paper-result-figure paper-cost-figure" id="results-memory-cost" aria-labelledby="memory-cost-title">
     <div className="paper-result-heading"><div><p className="eyebrow">Research efficiency</p><h2 id="memory-cost-title">Belief notebooks reduce research cost</h2></div><div className="paper-result-takeaway"><strong>{Math.round(data.medianReduction * 100)}% <span>↓</span></strong><span>median cost reduction</span></div></div>
     <div className="paper-series-legend paper-cost-legend"><span><i className="memory-free" />Memory-free</span><span><i className="memory-on" />Memory-on</span><span>Estimated USD / forecast ↓</span></div>
     <figure className="paper-cost-chart">
-      <div className="paper-cost-axis" aria-hidden="true"><span /><div>{[0, maxCost / 3, maxCost * 2 / 3, maxCost].map(tick => <span key={tick} style={{ left: `${position(tick)}%` }}>${tick.toFixed(0)}</span>)}</div><span>Reduction</span></div>
+      <div className="paper-cost-axis" aria-hidden="true"><span /><div>{ticks.map(tick => <span key={tick} style={{ left: `${position(tick)}%` }}>${Number(tick.toFixed(2))}</span>)}</div><span>Reduction</span></div>
       {data.pairs.map(pair => <div className="paper-cost-row" key={pair.modelName} tabIndex={0} role="img" aria-label={`${pair.modelName}: memory-free ${money(pair.memoryFree)}, memory-on ${money(pair.memoryOn)}, ${(pair.reduction * 100).toFixed(1)}% lower estimated cost per forecast. ${count(pair.recordedFree)} and ${count(pair.recordedOn)} recorded forecasts, respectively.`}>
         <strong className="paper-cost-model">{pair.modelName.replace(/^Opus /, 'Claude Opus ').replace(/ max$/, '')}</strong>
         <div className="paper-cost-track" aria-hidden="true">
-          {[0, maxCost / 3, maxCost * 2 / 3, maxCost].map(tick => <i className="paper-cost-gridline" key={tick} style={{ left: `${position(tick)}%` }} />)}
-          <i className="paper-cost-connector" style={{ left: `${position(Math.min(pair.memoryFree, pair.memoryOn))}%`, width: `${position(Math.abs(pair.memoryFree - pair.memoryOn))}%` }} />
+          {ticks.map(tick => <i className="paper-cost-gridline" key={tick} style={{ left: `${position(tick)}%` }} />)}
+          <i className="paper-cost-connector" style={{ left: `${position(Math.min(pair.memoryFree, pair.memoryOn))}%`, width: `${Math.abs(position(pair.memoryFree) - position(pair.memoryOn))}%` }} />
           <span className="paper-cost-endpoint memory-free" style={{ left: `${position(pair.memoryFree)}%` }}><i /><b>{money(pair.memoryFree)}</b></span>
           <span className="paper-cost-endpoint memory-on" style={{ left: `${position(pair.memoryOn)}%` }}><i /><b>{money(pair.memoryOn)}</b></span>
         </div>
         <strong className="paper-cost-reduction">−{Math.round(pair.reduction * 100)}%</strong>
       </div>)}
-      <figcaption className="paper-figure-footnote"><span>{data.pairs.length} proprietary models</span><span>Quality is mixed: Brier improves for {data.qualityImprovedModels}/{data.qualityModelCount} models.</span></figcaption>
     </figure>
-    <SourceDetails href={data.sourceUrl}>
-      <p>Cost is the mean provider-estimated USD per recorded forecast, matching Table 12. These figures include initial and later forecast steps and exclude discarded retries. Each pair compares the same model in the two memory modes; the headline is the median of the five within-model percentage reductions. Open-weight costs are not compared across serving arrangements. The quality count covers all {data.qualityModelCount} models.</p>
-    </SourceDetails>
   </section>
 }
