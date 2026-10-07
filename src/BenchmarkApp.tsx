@@ -187,19 +187,19 @@ function OverviewPage({ manifest, runs, analysis }: { manifest: Manifest; runs: 
 
       <section className="highlight-section overview-results-stack section-rule" aria-label="Benchmark results">
         <MemoryChartCard title="Brier score" accent="activity" className="accuracy-card">
-          {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.brier} metric="brier" memoryEnabled={memoryEnabled} />}
+          {(memoryEnabled, heading, memoryControl) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.brier} metric="brier" memoryEnabled={memoryEnabled} heading={heading} memoryControl={memoryControl} />}
         </MemoryChartCard>
         <MemoryChartCard title="Accuracy" accent="quality" className="accuracy-card accuracy-metric-card">
-          {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.accuracy} metric="accuracy" memoryEnabled={memoryEnabled} />}
+          {(memoryEnabled, heading, memoryControl) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.accuracy} metric="accuracy" memoryEnabled={memoryEnabled} heading={heading} memoryControl={memoryControl} />}
         </MemoryChartCard>
         <MemoryChartCard title="Information alpha" help="infoAlpha" accent="tokens" className="accuracy-card">
-          {(memoryEnabled) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.infoAlpha} metric="infoAlpha" memoryEnabled={memoryEnabled} />}
+          {(memoryEnabled, heading, memoryControl) => <MetricLeaderboardChart runs={runs} baseline={manifest.crowd.infoAlpha} metric="infoAlpha" memoryEnabled={memoryEnabled} heading={heading} memoryControl={memoryControl} />}
         </MemoryChartCard>
         {murphy.length ? <MemoryChartCard title="Murphy decomposition" help="murphy" accent="quality" className="accuracy-card research-scatter-card murphy-metric-card">
-          {(memoryEnabled) => <ResearchScatterChart runs={runs} murphy={murphy} kind="murphy" memoryEnabled={memoryEnabled} />}
+          {(memoryEnabled, heading, memoryControl) => <ResearchScatterChart runs={runs} murphy={murphy} kind="murphy" memoryEnabled={memoryEnabled} heading={heading} memoryControl={memoryControl} />}
         </MemoryChartCard> : null}
         {costRuns.length ? <MemoryChartCard title="Cost per forecast" accent="activity" className="accuracy-card cost-metric-card">
-          {(memoryEnabled) => <MetricLeaderboardChart runs={costRuns} baseline={null} metric="avgUsd" memoryEnabled={memoryEnabled} />}
+          {(memoryEnabled, heading, memoryControl) => <MetricLeaderboardChart runs={costRuns} baseline={null} metric="avgUsd" memoryEnabled={memoryEnabled} heading={heading} memoryControl={memoryControl} />}
         </MemoryChartCard> : null}
       </section>
 
@@ -831,13 +831,9 @@ function ModelTooltipContent({ modelName }: { modelName: string }) {
   const metadata = modelMetadataFor(modelName)
   const effortLabels: Record<string, string> = { high: 'High', max: 'Max', xhigh: 'Extra High' }
   const reasoning = metadata.reasoningEffort.startsWith('Native') ? 'Native' : (effortLabels[metadata.reasoningEffort] ?? metadata.reasoningEffort)
-  const architecture = metadata.architecture.startsWith('Hybrid') ? 'Hybrid MoE' : metadata.architecture.replace('Mixture of experts (MoE)', 'MoE')
   return <>
     <strong>{metadata.officialName}</strong>
-    {!metadata.proprietary ? <>
-      <span className="model-metadata-line">Model Size: {metadata.sizeLabel}</span>
-      <span className="model-metadata-line">Architecture: {architecture}</span>
-    </> : null}
+    {!metadata.proprietary ? <span className="model-metadata-line">Model Size: {metadata.sizeLabel}</span> : null}
     <span className="model-metadata-line">Reasoning Effort: {reasoning}</span>
   </>
 }
@@ -962,15 +958,14 @@ function MemoryToggle({ title, enabled: memoryEnabled, comparisonMode, showLabel
   )
 }
 
-function MemoryChartCard({ title, help, accent, className = '', children }: { title: string; help?: MetricHelpKind; accent: 'quality' | 'activity' | 'tokens'; className?: string; children: (memoryEnabled: boolean) => React.ReactNode }) {
+function MemoryChartCard({ title, help, accent, className = '', children }: { title: string; help?: MetricHelpKind; accent: 'quality' | 'activity' | 'tokens'; className?: string; children: (memoryEnabled: boolean, heading: React.ReactNode, memoryControl: React.ReactNode) => React.ReactNode }) {
   const [memoryEnabled, setMemoryEnabled] = useState(false)
   return (
     <article className={`highlight-card ${accent} ${className}`.trim()}>
-      <div className="highlight-card-header">
-        <div className="highlight-card-copy"><div className="highlight-card-heading"><span aria-hidden="true" /><h3>{title}{help ? <MetricHelp kind={help} /> : null}</h3></div></div>
-        <MemoryToggle title={title} enabled={memoryEnabled} onChange={() => setMemoryEnabled((enabled) => !enabled)} />
-      </div>
-      {children(memoryEnabled)}
+      {children(memoryEnabled,
+        <div className="highlight-card-heading"><span aria-hidden="true" /><h3>{title}{help ? <MetricHelp kind={help} /> : null}</h3></div>,
+        <MemoryToggle title={title} enabled={memoryEnabled} onChange={() => setMemoryEnabled((enabled) => !enabled)} />,
+      )}
     </article>
   )
 }
@@ -1161,7 +1156,7 @@ function ModelFilteredAnalysisSection({ chartId, eyebrow, title, description, no
   )
 }
 
-function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { runs: RunSummary[]; baseline: number | null; metric: LeaderboardMetric; memoryEnabled: boolean }) {
+function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled, heading, memoryControl }: { runs: RunSummary[]; baseline: number | null; metric: LeaderboardMetric; memoryEnabled: boolean; heading: React.ReactNode; memoryControl: React.ReactNode }) {
   const details = leaderboardMetricDetails[metric]
   const allGroups = useMemo(() => groupRuns(runs)
     .filter((group) => group.runs.some((run) => isFiniteNumber(run[metric])))
@@ -1266,13 +1261,14 @@ function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { run
 
   return (
     <figure className={`accuracy-leaderboard metric-${metric}`}>
-      <div className="accuracy-leaderboard-toolbar">
-        <div className="accuracy-mode-legend" aria-label="Active run condition">
-          <span className={`memory-legend${memoryEnabled ? ' on' : ''}`}><i />{modeLabel(activeMode)}</span>
+      <div className="accuracy-leaderboard-toolbar overview-chart-header">
+        {heading}
+        <div className="accuracy-mode-legend overview-chart-reference">
           {metric === 'avgUsd' ? <span title="Average estimated provider cost per recorded forecast">USD per forecast</span> : null}
           {baseline == null || !showCrowdLine ? null : <span title={metric === 'infoAlpha' ? 'Market reference: zero by definition' : 'Rounded market reference from paper v1, Table 3'}><i className="crowd" />Crowd · {formatLeaderboardValue(metric, baseline)}</span>}
         </div>
         <div className="accuracy-chart-actions">
+          {memoryControl}
           <details className="accuracy-model-picker" name={controlName}>
             <summary><span aria-hidden="true">＋</span> Add models <small>{selected.length}/{groups.length}</small></summary>
             <div className="accuracy-model-picker-panel">
@@ -1348,7 +1344,7 @@ function MetricLeaderboardChart({ runs, baseline, metric, memoryEnabled }: { run
                   const isNegative = valuePosition < originPosition
                   const displayValue = formatLeaderboardValue(metric, value)
                   const metadata = modelMetadataFor(group.modelName)
-                  const tooltip = `${metadata.officialName} · ${displayValue} ${details.label.toLowerCase()} · ${metadata.parameters} · ${metadata.architecture} · reasoning effort: ${metadata.reasoningEffort}`
+                  const tooltip = `${metadata.officialName} · ${displayValue} ${details.label.toLowerCase()} · ${metadata.parameters} · reasoning effort: ${metadata.reasoningEffort}`
                   return (
                     <article className="accuracy-model-group" key={group.id} style={chartStyle}>
                       <div className="accuracy-bar-pair single">
@@ -1381,7 +1377,7 @@ type ResearchScatterDatum = {
   murphy?: MurphySummary
 }
 
-function ResearchScatterChart({ runs, murphy, kind, memoryEnabled }: { runs: RunSummary[]; murphy: MurphySummary[]; kind: ResearchScatterKind; memoryEnabled: boolean }) {
+function ResearchScatterChart({ runs, murphy, kind, memoryEnabled, heading, memoryControl }: { runs: RunSummary[]; murphy: MurphySummary[]; kind: ResearchScatterKind; memoryEnabled: boolean; heading: React.ReactNode; memoryControl: React.ReactNode }) {
   const plotRef = useRef<HTMLDivElement>(null)
   const [plotSize, setPlotSize] = useState({ width: 958, height: 484 })
   const [modelTooltip, setModelTooltip] = useState<{ point: ResearchScatterDatum; anchor: TooltipAnchor } | null>(null)
@@ -1512,15 +1508,16 @@ function ResearchScatterChart({ runs, murphy, kind, memoryEnabled }: { runs: Run
   return (
     <figure className={`research-scatter research-scatter-${kind}`}>
 
-      <div className="accuracy-leaderboard-toolbar">
-        <div className="accuracy-mode-legend" aria-label="Active run condition and chart references">
-          <span className={`memory-legend${memoryEnabled ? ' on' : ''}`}><i />{conditionLabel}</span>
+      <div className="accuracy-leaderboard-toolbar overview-chart-header">
+        {heading}
+        <div className="accuracy-mode-legend overview-chart-reference">
           {kind === 'murphy' && crowd && showReference ? <span><i className="scatter-crowd" />Market crowd</span> : null}
           {kind === 'cost' && showReference ? <span><i className="crowd" />Crowd alpha · 0.000</span> : null}
           {kind === 'cost' && showFrontier ? <span><i className="scatter-frontier" />Pareto frontier</span> : null}
         </div>
 
         <div className="accuracy-chart-actions">
+          {memoryControl}
           <details className="accuracy-model-picker" name={controlName}>
             <summary><span aria-hidden="true">＋</span> Add models <small>{selected.length}/{groups.length}</small></summary>
             <div className="accuracy-model-picker-panel">
